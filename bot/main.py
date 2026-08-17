@@ -43,8 +43,11 @@ BOT_COMMANDS = [
 
 
 async def _register_commands(application: Application) -> None:
-    await application.bot.set_my_commands(BOT_COMMANDS)
-    logger.info("Bot command menu registered")
+    try:
+        await application.bot.set_my_commands(BOT_COMMANDS)
+        logger.info("Bot command menu registered")
+    except Exception as exc:
+        logger.warning("Could not register bot commands (non-fatal): %s", exc)
 
 
 def main() -> None:
