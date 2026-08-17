@@ -6,7 +6,7 @@ services:
     region: virginia
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python scripts/run_bot.py
+    startCommand: python scripts/init_db.py && python scripts/run_bot.py
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.0"
