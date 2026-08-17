@@ -1,0 +1,20 @@
+{
+  "employer": {
+    "id": "ITG",
+    "name": "ITG",
+    "role": "Компания, в которой вы работаете техником (подрядчик на объектах Xfinity / Comcast)"
+  },
+  "payroll": {
+    "id": "ATN",
+    "name": "ATN",
+    "role": "Компания, которая выплачивает зарплату (инвойсы, payroll PDF)"
+  },
+  "client": {
+    "name": "Xfinity / Comcast",
+    "role": "Клиент на объекте — приложение Tech360"
+  },
+  "notes": {
+    "invoice_format": "PDF-инвойсы приходят от ATN в формате M_{tech_id}_tech.pdf",
+    "project_folder": "ITG — название этого проекта/сервиса учёта"
+  }
+}

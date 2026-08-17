@@ -1,0 +1,560 @@
+{
+  "meta": {
+    "version": "1.0.0",
+    "description": "ITG tech pay database — rates from ATN payroll invoices + Tech360 Pay Guide v2",
+    "employer_company": "ITG",
+    "payroll_company": "ATN",
+    "tech_id": "I0KF",
+    "timezone": "America/New_York",
+    "week": {
+      "start_day": "sunday",
+      "end_day": "saturday",
+      "label_format": "WEEK {start} to {end}"
+    },
+    "payment_lag_days": 13,
+    "sources": [
+      "M_I0KF_tech.pdf (week 2026-07-26 to 2026-08-01)",
+      "M_I0KF_tech (1).pdf (week 2026-07-19 to 2026-07-25)",
+      "Tech360_Pay_Detailed_Color_Guide_v2.pdf",
+      "Field notes — Codes for job & billing (legacy rates; invoice amounts override)"
+    ]
+  },
+
+  "deductions": {
+    "truck": {
+      "code": "Truck",
+      "full_week": 150.0,
+      "partial_week_example": 42.86,
+      "partial_week_note": "Prorated when not a full work week; exact formula not confirmed — use full_week for complete weeks",
+      "confirmed": true
+    },
+    "meter": {
+      "code": "Meter_Charge",
+      "per_week": 15.0,
+      "confirmed": true
+    },
+    "deposit": {
+      "code": "DEPOSIT",
+      "amount": null,
+      "note": "Shown on invoice header when applicable; amount varies",
+      "confirmed": false
+    }
+  },
+
+  "job_codes": {
+    "R.T.8.": {
+      "amount": 39.91,
+      "reference_amount": 37.35,
+      "category": "repair",
+      "label": "Trouble Call (standard)",
+      "tech360_triggers": ["O01 drop connection replacement", "T24 customer premise equipment", "u40", "u21"],
+      "confirmed": true,
+      "payroll_count": 25
+    },
+    "R.T.7.": {
+      "amount": 37.57,
+      "reference_amount": 26.15,
+      "reference_code": "R.T.6.",
+      "category": "repair",
+      "label": "Special Request — PROACTIVE XIT-CF",
+      "tech360_triggers": ["Proactive Visit", "XA:MONITOR FAIL", "XIT-CF"],
+      "confirmed": true,
+      "example_job": 475937
+    },
+    "R.T.17.": {
+      "amount": 21.11,
+      "reference_amount": 19.61,
+      "category": "repair",
+      "label": "Special Request — GENESIS SRO-CF",
+      "tech360_triggers": ["Miscellaneous SRO", "GENESIS", "SRO-CF"],
+      "confirmed": true,
+      "example_job": 492449
+    },
+    "R.T.6.": {
+      "amount": 26.15,
+      "category": "repair",
+      "label": "Proactive Visit (field guide — may bill as R.T.7. on payroll)",
+      "tech360_triggers": ["Proactive Visit"],
+      "confirmed": false,
+      "note": "Legacy field guide code; confirmed payroll uses R.T.7. at $37.57"
+    },
+    "R.Q.2.": {
+      "amount": 52.83,
+      "reference_amount": 52.73,
+      "category": "service_change",
+      "label": "Service Change — TECH RECOVERY",
+      "tech360_triggers": ["FS3 inactive outlet", "TECH RECOVERY"],
+      "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.4."],
+      "confirmed": true,
+      "example_jobs": [497745, 510236, 501573, 444856, 502129]
+    },
+    "R.Q.4.": {
+      "amount": 42.26,
+      "reference_amount": 40.0,
+      "category": "self_install",
+      "label": "Self Install",
+      "tech360_triggers": ["Self Install", "RQ4"],
+      "confirmed": true,
+      "example_job": 480555,
+      "note": "Field guide RQ4 self install; payroll amount $42.26 is authoritative"
+    },
+    "R.R.1.": {
+      "amount": 11.27,
+      "reference_amount": 10.46,
+      "category": "site_work",
+      "label": "Aerial drop",
+      "label_short": "Aerial (302)",
+      "tech360_triggers": ["302 aerial drop", "302/FSB degraded aerial drop"],
+      "applies_to": ["service_change", "new_install", "service_change_up"],
+      "confirmed": true,
+      "example_job": 511180
+    },
+    "R.R.2.": {
+      "amount": 23.95,
+      "reference_amount": 21.35,
+      "reference_code": "R.R.3.",
+      "category": "site_work",
+      "label": "MDU drop in apartment",
+      "label_short": "MDU (262)",
+      "tech360_triggers": ["262 MDU drop in apartment"],
+      "applies_to": ["service_change", "new_install", "service_change_up"],
+      "confirmed": "partial",
+      "example_job": 499413,
+      "note": "Field guide listed as R.R.3. at $21.35; payroll bills R.R.2. at $23.95"
+    },
+    "R.R.3.": {
+      "amount": 21.35,
+      "category": "site_work",
+      "label": "MDU drop (field guide code — payroll may use R.R.2.)",
+      "tech360_triggers": ["262 MDU drop in apartment"],
+      "confirmed": false,
+      "note": "Legacy field guide code; use R.R.2. on invoice when MDU work done"
+    },
+    "R.R.4.": {
+      "amount": 4.36,
+      "category": "site_work",
+      "label": "Temporary Drop",
+      "label_short": "Temp drop",
+      "tech360_triggers": ["Temporary drop", "U44 underground drop context"],
+      "applies_to": ["service_change", "new_install", "service_change_up"],
+      "confirmed": false,
+      "note": "From field guide; not yet seen on payroll sample — amount unconfirmed"
+    },
+    "R.A.1.": {
+      "amount": 17.85,
+      "reference_amount": 16.56,
+      "category": "service_change_up",
+      "label": "Service Change UP — base (HSD UP / VID UP)",
+      "tech360_triggers": ["CAO complete as ordered", "VID UPGRADE", "HSD UP", "VID UP"],
+      "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.4."],
+      "confirmed": true,
+      "example_job": 498945
+    },
+    "R.N.1.": {
+      "amount": 32.85,
+      "reference_amount": 30.07,
+      "category": "new_install_product",
+      "label": "New Install — One (1) Product (HSD)",
+      "tech360_triggers": ["HSD NC", "HSD RC", "CAO"],
+      "confirmed": true,
+      "example_jobs": [492264, 511180]
+    },
+    "R.J.1.": {
+      "amount": 32.85,
+      "reference_amount": 30.07,
+      "category": "new_install_product",
+      "label": "New Install — Two (2) Product (HSD / VID)",
+      "tech360_triggers": ["CAO two-product install"],
+      "confirmed": true,
+      "example_job": 467347
+    },
+    "R.F.1.": {
+      "amount": 43.14,
+      "category": "new_install_product",
+      "label": "New Install — Three (3) Product (CDV/HSD/VID)",
+      "tech360_triggers": ["CAO three-product install"],
+      "confirmed": false,
+      "note": "From field guide; not yet on payroll sample — amount unconfirmed"
+    }
+  },
+
+  "equipment_codes": {
+    "E.C.5.": {
+      "amount": 17.65,
+      "reference_amount": 16.56,
+      "label": "Gateway / Modem (XB3/XB6)",
+      "label_ru": "Шлюз / модем",
+      "applies_to": ["service_change_up", "new_install"],
+      "confirmed": true,
+      "allow_multiple": false
+    },
+    "E.B.5.": {
+      "amount": 15.31,
+      "reference_amount": 14.16,
+      "label": "Wired TV (X1 Wired Platform)",
+      "label_ru": "Проводное TV",
+      "applies_to": ["service_change_up", "new_install"],
+      "confirmed": true,
+      "allow_multiple": false
+    },
+    "E.B.6.": {
+      "amount": 9.39,
+      "reference_amount": 8.72,
+      "label": "Wireless TV (X1 Wireless Platform)",
+      "label_ru": "Беспроводное TV (Xumo / Flex)",
+      "applies_to": ["service_change_up", "new_install"],
+      "confirmed": true,
+      "allow_multiple": true
+    }
+  },
+
+  "work_areas": ["Broward", "Miami"],
+
+  "screenshot_extraction": {
+    "fields": [
+      {
+        "key": "job_number",
+        "pattern": "Job#\\s*(\\d+)",
+        "required": true,
+        "merge_across_photos": true
+      },
+      {
+        "key": "customer_name",
+        "required": false
+      },
+      {
+        "key": "address",
+        "required": true
+      },
+      {
+        "key": "account_number",
+        "pattern": "849575\\d+",
+        "required": false
+      },
+      {
+        "key": "work_type",
+        "values": ["Trouble Call", "Service Change", "New Install", "Special Request", "Self Install"],
+        "required": true
+      },
+      {
+        "key": "subtype_codes",
+        "description": "Lines below work type: HSD OUT, TECH RECOVERY, VID UP, HSD NC, etc.",
+        "required": true
+      },
+      {
+        "key": "hookup_type",
+        "values": ["Aerial", "Underground"],
+        "required": false,
+        "billing_note": "Not confirmed as separate payroll line in current data"
+      },
+      {
+        "key": "dwelling_type",
+        "values": ["Single Dwelling Unit", "Multiple Dwelling Unit"],
+        "required": false,
+        "billing_note": "MDU extra billing not confirmed — open question 6"
+      }
+    ],
+    "photo_merge_key": "job_number",
+    "photo_wait_seconds": 60
+  },
+
+  "calculation_rules": [
+    {
+      "id": "trouble_call",
+      "priority": 10,
+      "match": {
+        "work_type": "Trouble Call"
+      },
+      "match_any_subtype": [
+        "HSD OUT",
+        "H2:INT OUT",
+        "VIDEO TC",
+        "RPT TC",
+        "INT OUT"
+      ],
+      "lines": [{ "code": "R.T.8.", "qty": 1 }],
+      "user_prompt": null,
+      "confirmed": true,
+      "example_jobs": [509413, 506037, 502640, 508836]
+    },
+    {
+      "id": "service_change_tech_recovery",
+      "priority": 20,
+      "match": {
+        "work_type": "Service Change"
+      },
+      "match_all_subtype": ["TECH RECOVERY"],
+      "lines": [{ "code": "R.Q.2.", "qty": 1 }],
+      "site_work_addon_prompt": true,
+      "user_prompt": null,
+      "confirmed": true,
+      "example_jobs": [497745, 510236]
+    },
+    {
+      "id": "service_change_hsd_up",
+      "priority": 21,
+      "match": {
+        "work_type": "Service Change"
+      },
+      "match_any_subtype": ["HSD UP"],
+      "base_lines": [{ "code": "R.A.1.", "qty": 1 }],
+      "equipment_prompt": true,
+      "site_work_addon_prompt": true,
+      "confirmed": true
+    },
+    {
+      "id": "service_change_vid_up",
+      "priority": 22,
+      "match": {
+        "work_type": "Service Change"
+      },
+      "match_any_subtype": ["VID UP"],
+      "base_lines": [{ "code": "R.A.1.", "qty": 1 }],
+      "equipment_prompt": true,
+      "site_work_addon_prompt": true,
+      "confirmed": true,
+      "example_jobs": [498945]
+    },
+    {
+      "id": "special_request_genesis",
+      "priority": 30,
+      "match": {
+        "work_type": "Special Request"
+      },
+      "match_any_subtype": ["GENESIS", "G9:GENESIS", "SRO-CF"],
+      "lines": [{ "code": "R.T.17.", "qty": 1 }],
+      "user_prompt": null,
+      "confirmed": true,
+      "example_jobs": [492449]
+    },
+    {
+      "id": "special_request_proactive",
+      "priority": 31,
+      "match": {
+        "work_type": "Special Request"
+      },
+      "match_any_subtype": ["PROACTIVE", "XIT-CF", "MONITOR FAIL", "XA:MONITOR"],
+      "lines": [{ "code": "R.T.7.", "qty": 1 }],
+      "user_prompt": null,
+      "confirmed": true,
+      "example_jobs": [475937]
+    },
+    {
+      "id": "new_install",
+      "priority": 40,
+      "match": {
+        "work_type": "New Install"
+      },
+      "subtype_hints": ["HSD NC", "HSD RC", "NC", "RC"],
+      "product_prompt": {
+        "options": [
+          { "code": "R.N.1.", "label": "1 Product — HSD (R.N.1.)", "default": true },
+          { "code": "R.J.1.", "label": "2 Product — HSD/VID (R.J.1.)" },
+          { "code": "R.F.1.", "label": "3 Product — CDV/HSD/VID (R.F.1.) ?" }
+        ]
+      },
+      "equipment_prompt": true,
+      "site_work_addon_prompt": true,
+      "confirmed": true,
+      "example_jobs": [492264, 511180, 467347]
+    },
+    {
+      "id": "self_install",
+      "priority": 50,
+      "match": {
+        "work_type": "Self Install"
+      },
+      "lines": [{ "code": "R.Q.4.", "qty": 1 }],
+      "user_prompt": null,
+      "confirmed": true,
+      "note": "Self Install — R.Q.4. per field guide and payroll"
+    }
+  ],
+
+  "equipment_prompt_buttons": [
+    {
+      "id": "gateway",
+      "code": "E.C.5.",
+      "label": "Gateway / Modem",
+      "label_short": "Gateway +$17.65"
+    },
+    {
+      "id": "wired_tv",
+      "code": "E.B.5.",
+      "label": "Wired TV",
+      "label_short": "Wired TV +$15.31"
+    },
+    {
+      "id": "wireless_tv",
+      "code": "E.B.6.",
+      "label": "Wireless TV",
+      "label_short": "Wireless TV +$9.39",
+      "allow_repeat": true
+    }
+  ],
+
+  "site_work_addon_codes": [
+    {
+      "code": "R.R.1.",
+      "label": "Aerial drop (302)",
+      "label_short": "Aerial +$11.27",
+      "when": "Делал aerial drop / 302"
+    },
+    {
+      "code": "R.R.2.",
+      "label": "MDU drop in apartment (262)",
+      "label_short": "MDU +$23.95",
+      "when": "MDU drop в квартире / 262"
+    },
+    {
+      "code": "R.R.4.",
+      "label": "Temporary Drop",
+      "label_short": "Temp drop +$4.36",
+      "when": "Временный drop"
+    }
+  ],
+
+  "manual_addon_codes": [
+    {
+      "code": "R.R.1.",
+      "amount": 11.27,
+      "label": "Aerial drop (302)",
+      "label_short": "Aerial +$11.27",
+      "confirmed": true
+    },
+    {
+      "code": "R.R.2.",
+      "amount": 23.95,
+      "label": "MDU drop in apartment (262)",
+      "label_short": "MDU +$23.95",
+      "confirmed": "partial"
+    },
+    {
+      "code": "R.R.4.",
+      "amount": 4.36,
+      "label": "Temporary Drop",
+      "label_short": "Temp drop +$4.36",
+      "confirmed": false
+    }
+  ],
+
+  "confirmed_examples": [
+    {
+      "job_number": 497745,
+      "work_type": "Service Change",
+      "subtype": "TECH RECOVERY",
+      "expected_lines": [{ "code": "R.Q.2.", "amount": 52.83 }],
+      "expected_total": 52.83
+    },
+    {
+      "job_number": 509413,
+      "work_type": "Trouble Call",
+      "subtype": "HSD OUT",
+      "expected_lines": [{ "code": "R.T.8.", "amount": 39.91 }],
+      "expected_total": 39.91
+    },
+    {
+      "job_number": 498945,
+      "work_type": "Service Change",
+      "subtype": "VID UP",
+      "equipment": ["E.B.5."],
+      "expected_lines": [
+        { "code": "R.A.1.", "amount": 17.85 },
+        { "code": "E.B.5.", "amount": 15.31 }
+      ],
+      "expected_total": 33.16
+    },
+    {
+      "job_number": 492264,
+      "work_type": "New Install",
+      "subtype": "HSD NC",
+      "equipment": ["E.C.5."],
+      "product_code": "R.N.1.",
+      "expected_lines": [
+        { "code": "R.N.1.", "amount": 32.85 },
+        { "code": "E.C.5.", "amount": 17.65 }
+      ],
+      "expected_total": 50.5
+    },
+    {
+      "job_number": 511180,
+      "work_type": "New Install",
+      "subtype": "HSD RC",
+      "equipment": ["E.C.5."],
+      "optional_addons": ["R.R.1."],
+      "product_code": "R.N.1.",
+      "expected_lines": [
+        { "code": "R.N.1.", "amount": 32.85 },
+        { "code": "E.C.5.", "amount": 17.65 },
+        { "code": "R.R.1.", "amount": 11.27 }
+      ],
+      "expected_total": 61.77
+    },
+    {
+      "job_number": 467347,
+      "work_type": "New Install",
+      "subtype": "HSD NC",
+      "equipment": ["E.C.5.", "E.B.6.", "E.B.6."],
+      "product_code": "R.J.1.",
+      "expected_lines": [
+        { "code": "R.J.1.", "amount": 32.85 },
+        { "code": "E.C.5.", "amount": 17.65 },
+        { "code": "E.B.6.", "amount": 9.39 },
+        { "code": "E.B.6.", "amount": 9.39 }
+      ],
+      "expected_total": 69.28
+    },
+    {
+      "job_number": 492449,
+      "work_type": "Special Request",
+      "subtype": "GENESIS SRO-CF",
+      "expected_lines": [{ "code": "R.T.17.", "amount": 21.11 }],
+      "expected_total": 21.11
+    },
+    {
+      "job_number": 475937,
+      "work_type": "Special Request",
+      "subtype": "PROACTIVE XIT-CF",
+      "expected_lines": [{ "code": "R.T.7.", "amount": 37.57 }],
+      "expected_total": 37.57
+    }
+  ],
+
+  "billing_reference": {
+    "note": "Legacy field guide amounts; payroll invoice (M_I0KF_tech.pdf) overrides when different",
+    "work_types": {
+      "Trouble Call": {
+        "base_code": "R.T.8.",
+        "tech360_codes": ["O01", "T24", "u40", "u21"]
+      },
+      "Service Change TECH RECOVERY": {
+        "base_code": "R.Q.2.",
+        "tech360_codes": ["FS3", "302", "262", "U44"],
+        "addons": ["R.R.1. Aerial", "R.R.2. MDU (payroll) / R.R.3. MDU (field guide)", "R.R.4. Temp drop"]
+      },
+      "New Install": {
+        "tech360_codes": ["CAO", "302", "262", "U44"],
+        "products": ["R.Q.4. Self Install", "R.F.1. 3-product", "R.J.1. 2-product", "R.N.1. 1-product"],
+        "equipment": ["E.C.5.", "E.B.5.", "E.B.6."],
+        "addons": ["R.R.1.", "R.R.2.", "R.R.4."]
+      },
+      "VID UPGRADE / Service Change UP": {
+        "base_code": "R.A.1.",
+        "tech360_codes": ["CAO", "302", "262", "U44"],
+        "equipment": ["E.C.5.", "E.B.5.", "E.B.6."],
+        "addons": ["R.R.1.", "R.R.2.", "R.R.4."]
+      },
+      "Special Request": {
+        "codes": ["R.T.17. Miscellaneous SRO", "R.T.7. Proactive (payroll) / R.T.6. (field guide)"]
+      }
+    }
+  },
+
+  "open_questions": [
+    "Confirm R.F.1. three-product amount on next payroll",
+    "Confirm R.R.4. temporary drop appears on payroll",
+    "R.T.6. vs R.T.7. — same work billed under different code?",
+    "Underground drop U44 — separate line or bundled in R.R.1./R.R.2.?",
+    "FS3 inactive outlet vs other Service Change subtypes beyond TECH RECOVERY"
+  ]
+}

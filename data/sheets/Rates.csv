@@ -1,0 +1,16 @@
+code,category,amount,reference_amount,label_en,label_ru,confirmed,auto_or_manual,notes
+R.T.8.,repair,39.91,37.35,Trouble Call (standard),Trouble Call — стандарт,TRUE,auto,O01 / T24 / u40 / u21
+R.T.7.,repair,37.57,26.15,Special Request PROACTIVE,Special Request PROACTIVE,TRUE,auto,Field guide R.T.6. may be legacy
+R.T.17.,repair,21.11,19.61,Special Request GENESIS,Special Request GENESIS,TRUE,auto,G9:GENESIS / SRO-CF
+R.Q.2.,service_change,52.83,52.73,Service Change TECH RECOVERY,Service Change TECH RECOVERY,TRUE,auto,FS3 + optional site work addons
+R.Q.4.,self_install,42.26,40.00,Self Install,Self Install,TRUE,auto,Field guide RQ4
+R.A.1.,service_change_up,17.85,16.56,Service Change UP base,Service Change UP — база,TRUE,auto,HSD UP / VID UP / CAO
+R.N.1.,new_install_product,32.85,30.07,New Install 1-product HSD,New Install 1 продукт,TRUE,manual_product,HSD NC / RC
+R.J.1.,new_install_product,32.85,30.07,New Install 2-product HSD/VID,New Install 2 продукта,TRUE,manual_product,
+R.F.1.,new_install_product,43.14,,New Install 3-product CDV/HSD/VID,New Install 3 продукта,FALSE,manual_product,Not yet on payroll
+R.R.1.,site_work,11.27,10.46,Aerial drop (302),Aerial drop,TRUE,manual_addon,302 aerial / FSB degraded drop
+R.R.2.,site_work,23.95,21.35,MDU drop (262),MDU drop,PARTIAL,manual_addon,Payroll code; field guide had R.R.3.
+R.R.4.,site_work,4.36,,Temporary Drop,Временный drop,FALSE,manual_addon,From field guide only
+E.C.5.,equipment,17.65,16.56,Gateway XB3/XB6,Шлюз / модем,TRUE,button,Service Change UP + New Install
+E.B.5.,equipment,15.31,14.16,Wired TV X1,Wired TV,TRUE,button,Service Change UP + New Install
+E.B.6.,equipment,9.39,8.72,Wireless TV X1,Wireless TV,TRUE,button,Can repeat (qty per unit)

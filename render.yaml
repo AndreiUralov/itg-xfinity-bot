@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: itg-xfinity-bot
+    runtime: python
+    plan: free
+    region: virginia
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/run_bot.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: BOT_MODE
+        value: webhook
+      - key: DATABASE_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ALLOWED_USER_IDS
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_VISION_MODEL
+        value: gpt-4o-mini
+      - key: TECH_ID
+        value: I0KF
+      - key: DEFAULT_WORK_AREA
+        value: Broward
+      - key: PHOTO_WAIT_SECONDS
+        value: "60"

@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+output/
+data/job_lines/jobs.csv
+data/job_lines/archive/
+.venv/
+venv/

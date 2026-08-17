@@ -1,0 +1,44 @@
+{
+  "template_id": "atn_payroll_v1",
+  "description": "Matches ATN payroll invoice PDF layout (M_I0KF_tech.pdf). Employer: ITG.",
+  "employer_company": "ITG",
+  "payroll_company": "ATN",
+  "page": {
+    "size": "letter",
+    "orientation": "landscape",
+    "margins_inch": { "top": 0.4, "bottom": 0.4, "left": 0.35, "right": 0.35 }
+  },
+  "summary_columns": [
+    { "key": "production", "label_footer": "Production", "format": "currency" },
+    { "key": "truck", "label_footer": "Truck", "format": "currency_negative_paren" },
+    { "key": "meter", "label_footer": "Meter_Charge", "format": "currency_negative_paren" },
+    { "key": "deposit", "label_footer": "DEPOSIT", "format": "dash_or_currency" },
+    { "key": "net", "label_footer": null, "format": "currency" }
+  ],
+  "table_columns": [
+    { "key": "tech", "header": "Tech", "width": 0.06 },
+    { "key": "job_number", "header": "Job Number", "width": 0.08 },
+    { "key": "work_area", "header": "Work Area", "width": 0.08 },
+    { "key": "completion_date", "header": "Completion Date", "width": 0.14 },
+    { "key": "address", "header": "Address", "width": 0.36 },
+    { "key": "job_code", "header": "Job Code", "width": 0.08 },
+    { "key": "qty", "header": "QTY", "width": 0.05 },
+    { "key": "item_total", "header": "Item Total", "width": 0.08 }
+  ],
+  "formatting": {
+    "address_uppercase": true,
+    "completion_date_format": "%Y-%m-%d %H:%M:%S",
+    "currency_decimals": 2,
+    "currency_symbol": "$",
+    "currency_symbol_position": "suffix_tab",
+    "week_header": "WEEK {week_start} to {week_end} / PAYMENT DATE {payment_date}",
+    "filename_pattern": "M_{tech_id}_tech_{week_start}_to_{week_end}.pdf",
+    "sort_lines_by": ["completion_date", "job_number", "job_code"]
+  },
+  "schedule": {
+    "day": "monday",
+    "time": "07:00",
+    "timezone": "America/New_York",
+    "report_week": "previous_sunday_to_saturday"
+  }
+}

@@ -1,0 +1,9 @@
+rule_id,priority,work_type,subtype_match,match_mode,base_codes,equipment_prompt,product_prompt,confirmed,example_jobs
+trouble_call,10,Trouble Call,"HSD OUT|H2:INT OUT|VIDEO TC|RPT TC|INT OUT",any,R.T.8.,FALSE,FALSE,TRUE,509413;506037
+service_change_tech_recovery,20,Service Change,TECH RECOVERY,all,R.Q.2.,FALSE,FALSE,TRUE,497745;510236
+service_change_hsd_up,21,Service Change,HSD UP,any,R.A.1.,TRUE,FALSE,TRUE,
+service_change_vid_up,22,Service Change,VID UP,any,R.A.1.,TRUE,FALSE,TRUE,498945
+special_request_genesis,30,Special Request,"GENESIS|G9:GENESIS|SRO-CF",any,R.T.17.,FALSE,FALSE,TRUE,492449
+special_request_proactive,31,Special Request,"PROACTIVE|XIT-CF|MONITOR FAIL|XA:MONITOR",any,R.T.7.,FALSE,FALSE,TRUE,475937
+new_install,40,New Install,"HSD NC|HSD RC|NC|RC",any,,TRUE,TRUE,TRUE,492264;511180;467347
+self_install,50,Self Install,,,,FALSE,FALSE,FALSE,

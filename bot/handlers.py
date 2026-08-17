@@ -1,0 +1,852 @@
+"""Telegram bot handlers for ITG job logging."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+import sys
+import tempfile
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from telegram import Update
+from telegram.ext import ContextTypes
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "lib"))
+
+from bot.config import (  # noqa: E402
+    DEFAULT_WORK_AREA,
+    PAY_DB_PATH,
+    PHOTO_WAIT_SECONDS,
+    TELEGRAM_ALLOWED_USER_IDS,
+    TECH_ID,
+)
+from bot.keyboards import (  # noqa: E402
+    NEW_INSTALL_SUBTYPES,
+    SERVICE_CHANGE_SUBTYPES,
+    SPECIAL_REQUEST_SUBTYPES,
+    confirm_keyboard,
+    equipment_keyboard,
+    format_equipment_summary,
+    photo_actions_keyboard,
+    product_keyboard,
+    subtype_keyboard,
+    today_delete_confirm_keyboard,
+    today_job_keyboard,
+    today_list_keyboard,
+    work_type_keyboard,
+)
+from bot.jobs_manager import delete_job, get_job, get_today_jobs, job_to_session_data, today_totals  # noqa: E402
+from bot.storage import save_job, week_bounds, week_totals  # noqa: E402
+from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
+from datetime_miami import miami_now  # noqa: E402
+from work_area import is_confident, resolve_work_area  # noqa: E402
+from calculator import calculate_job, find_matching_rule, load_database  # noqa: E402
+
+TZ = ZoneInfo("America/New_York")
+
+_media_group_buffers: dict[str, dict[str, Any]] = {}
+_photo_wait_tasks: dict[int, asyncio.Task] = {}
+
+
+def _authorized(user_id: int) -> bool:
+    if not TELEGRAM_ALLOWED_USER_IDS:
+        return True
+    return user_id in TELEGRAM_ALLOWED_USER_IDS
+
+
+async def _deny(update: Update) -> None:
+    if update.message:
+        await update.message.reply_text("⛔ Доступ запрещён.")
+    elif update.callback_query:
+        await update.callback_query.answer("Доступ запрещён", show_alert=True)
+
+
+def _reset_session(context: ContextTypes.DEFAULT_TYPE) -> None:
+    for key in list(context.user_data.keys()):
+        del context.user_data[key]
+
+
+def _get_db() -> dict:
+    return load_database(PAY_DB_PATH)
+
+
+def _resolve_work_area(data: dict[str, Any]) -> None:
+    address = data.get("address") or ""
+    if not address:
+        data["work_area"] = DEFAULT_WORK_AREA
+        data["work_area_source"] = "default"
+        return
+    area, source = resolve_work_area(address, DEFAULT_WORK_AREA)
+    data["work_area"] = area
+    data["work_area_source"] = source
+
+
+def _work_area_label(data: dict[str, Any]) -> str:
+    area = data.get("work_area") or DEFAULT_WORK_AREA
+    source = data.get("work_area_source", "default")
+    hints = {"zip": "по ZIP", "city": "по городу", "default": "по умолчанию"}
+    return f"{area} ({hints.get(source, source)})"
+
+
+def _format_preview(data: dict[str, Any], pay_result=None) -> str:
+    subtypes = ", ".join(data.get("subtype_codes") or []) or "—"
+    lines = [
+        "📋 <b>Распознано</b>",
+        f"Job#: <code>{data.get('job_number') or '?'}</code>",
+        f"Адрес: {data.get('address') or '—'}",
+        f"Work Area: <b>{_work_area_label(data)}</b>",
+        f"Account: <code>{data.get('account_number') or '—'}</code>",
+        f"Тип: <b>{data.get('work_type') or '?'}</b>",
+        f"Коды: {subtypes}",
+    ]
+    if data.get("hookup_type"):
+        lines.append(f"Hookup: {data['hookup_type']}")
+    if pay_result and pay_result.lines:
+        lines.append("")
+        lines.append("💰 <b>Расчёт ATN:</b>")
+        for line in pay_result.lines:
+            lines.append(f"  {line.code} → ${line.total:.2f}")
+        lines.append(f"<b>Итого: ${pay_result.total:.2f}</b>")
+    return "\n".join(lines)
+
+
+def _preview_pay(data: dict, equipment: list[str] | None = None, product_code: str | None = None, addons: list[str] | None = None):
+    db = _get_db()
+    return calculate_job(
+        db,
+        job_number=data.get("job_number") or "?",
+        work_type=data.get("work_type") or "",
+        subtypes=data.get("subtype_codes"),
+        equipment=equipment,
+        product_code=product_code,
+        optional_addons=addons,
+    )
+
+
+def _jobs_word(n: int) -> str:
+    n = abs(n) % 100
+    n1 = n % 10
+    if 11 <= n <= 19:
+        return "работ"
+    if n1 == 1:
+        return "работа"
+    if 2 <= n1 <= 4:
+        return "работы"
+    return "работ"
+
+
+def _format_stats_block() -> str:
+    day = today_totals()
+    week = week_totals()
+    return (
+        f"📈 <b>Сегодня:</b> {day['job_count']} {_jobs_word(day['job_count'])}, "
+        f"<b>${day['production']:,.2f}</b>\n"
+        f"📊 <b>Неделя</b> ({week['week_start']}–{week['week_end']}): "
+        f"{week['job_count']} {_jobs_word(week['job_count'])}, "
+        f"<b>${week['production']:,.2f}</b>"
+    )
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+    _reset_session(context)
+    await update.message.reply_text(
+        "👋 <b>ITG Job Tracker</b>\n\n"
+        f"{_format_stats_block()}\n\n"
+        "Отправь скриншот(ы) из Tech360 — 1 или 2 фото одним сообщением.\n\n"
+        "<b>Команды:</b>\n"
+        "/week — итог текущей недели (Вс–Сб)\n"
+        "/today — работы за сегодня (изменить / удалить)\n"
+        "/invoice — PDF в формате ATN\n"
+        "/cancel — отменить текущую работу\n"
+        "/help — справка",
+        parse_mode="HTML",
+    )
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+    await update.message.reply_text(
+        "📖 <b>Как пользоваться</b>\n\n"
+        "1. Сделай скрин(ы) работы в Tech360\n"
+        "2. Отправь в бот (альбомом или по одному)\n"
+        "3. Проверь данные → подтверди\n"
+        "4. Выбери оборудование (если нужно)\n"
+        "5. Работа сохранится для недельного инвойса ATN\n\n"
+        "/today — посмотреть сегодняшние работы, удалить или пересчитать при ошибке.\n\n"
+        "По понедельникам в 7:00 придёт PDF за прошлую неделю.",
+        parse_mode="HTML",
+    )
+
+
+async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+    uid = update.effective_user.id
+    if uid in _photo_wait_tasks:
+        _photo_wait_tasks[uid].cancel()
+        del _photo_wait_tasks[uid]
+    _reset_session(context)
+    await update.message.reply_text("❌ Отменено. Жду новый скрин.")
+
+
+async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+    db = _get_db()
+    totals = week_totals()
+    truck = db["deductions"]["truck"]["full_week"]
+    meter = db["deductions"]["meter"]["per_week"]
+    net = round(totals["production"] - truck - meter, 2)
+    await update.message.reply_text(
+        f"📊 <b>Неделя {totals['week_start']} — {totals['week_end']}</b>\n\n"
+        f"Работ: {totals['job_count']}\n"
+        f"Строк: {totals['line_count']}\n"
+        f"Production: <b>${totals['production']:,.2f}</b>\n"
+        f"Truck: (${truck:,.2f})\n"
+        f"Meter: (${meter:,.2f})\n"
+        f"≈ Net: <b>${net:,.2f}</b>",
+        parse_mode="HTML",
+    )
+
+
+def _format_today_list(jobs: list[dict]) -> str:
+    today = miami_now().date()
+    months = (
+        "янв", "фев", "мар", "апр", "май", "июн",
+        "июл", "авг", "сен", "окт", "ноя", "дек",
+    )
+    date_label = f"{today.day} {months[today.month - 1]} {today.year}"
+    if not jobs:
+        return f"📋 <b>Сегодня ({date_label})</b>\n\nНет сохранённых работ."
+
+    total = round(sum(j["total"] for j in jobs), 2)
+    count = len(jobs)
+    word = "работа" if count == 1 else ("работы" if 2 <= count <= 4 else "работ")
+    lines = [f"📋 <b>Сегодня ({date_label})</b> — {count} {word}, <b>${total:.2f}</b>\n"]
+    for i, job in enumerate(jobs, 1):
+        addr = job.get("address") or "—"
+        if len(addr) > 45:
+            addr = addr[:42] + "..."
+        lines.append(
+            f"{i}. Job# <code>{job['job_number']}</code> — {job.get('work_type', '?')} — "
+            f"<b>${job['total']:.2f}</b>\n   {addr}"
+        )
+    lines.append("\nНажми на работу, чтобы изменить или удалить.")
+    return "\n".join(lines)
+
+
+def _format_today_job(job: dict) -> str:
+    lines = [
+        f"📄 <b>Job# {job['job_number']}</b>",
+        f"Тип: <b>{job.get('work_type', '—')}</b>",
+        f"Work Area: {job.get('work_area', '—')}",
+        f"Адрес: {job.get('address', '—')}",
+        f"Account: <code>{job.get('account_number') or '—'}</code>",
+        f"Коды: {job.get('subtype_codes') or '—'}",
+        "",
+        "💰 <b>ATN строки:</b>",
+        job.get("codes", "—"),
+        "",
+        f"<b>Итого: ${job['total']:.2f}</b>",
+    ]
+    return "\n".join(lines)
+
+
+async def _send_today_list(target, *, edit: bool = False) -> None:
+    jobs = get_today_jobs()
+    text = _format_today_list(jobs)
+    markup = today_list_keyboard(jobs) if jobs else None
+    if edit:
+        await target.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    else:
+        await target.reply_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+    await _send_today_list(update.message)
+
+
+async def cmd_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+    from weekly_report import current_payroll_week, generate_weekly_report
+
+    week_start, week_end = current_payroll_week(datetime.now(TZ).date())
+    try:
+        result = generate_weekly_report(week_start=week_start, week_end=week_end)
+    except Exception as exc:
+        await update.message.reply_text(f"⚠️ Не удалось создать PDF: {exc}")
+        return
+
+    if not result["pdf"].exists():
+        await update.message.reply_text("Нет работ за эту неделю.")
+        return
+
+    with result["pdf"].open("rb") as doc:
+        await update.message.reply_document(
+            document=doc,
+            filename=result["pdf"].name,
+            caption=f"📋 ITG — расчётный лист ATN\nWEEK {week_start} to {week_end}",
+        )
+
+
+async def _download_photos(context: ContextTypes.DEFAULT_TYPE, file_ids: list[str]) -> list[Path]:
+    paths: list[Path] = []
+    tmp_dir = Path(tempfile.mkdtemp(prefix="itg_"))
+    for i, file_id in enumerate(file_ids):
+        tg_file = await context.bot.get_file(file_id)
+        dest = tmp_dir / f"photo_{i}.jpg"
+        await tg_file.download_to_drive(custom_path=dest)
+        paths.append(dest)
+    return paths
+
+
+def _confirm_markup(data: dict[str, Any]):
+    return confirm_keyboard(data.get("work_area") or DEFAULT_WORK_AREA)
+
+
+async def _show_preview_or_ask_details(message_target, context, extracted: dict) -> None:
+    """After work type is set — ask Job#/address if missing, else show preview."""
+    if not extracted.get("job_number"):
+        context.user_data["step"] = "await_job_number"
+        await message_target.edit_message_text(
+            "🔢 Введи <b>Job#</b> (только цифры, напр. <code>497745</code>):",
+            parse_mode="HTML",
+        )
+        return
+    if not extracted.get("address"):
+        context.user_data["step"] = "await_address"
+        await message_target.edit_message_text(
+            "📍 Введи <b>адрес</b> клиента одной строкой:",
+            parse_mode="HTML",
+        )
+        return
+
+    _resolve_work_area(extracted)
+    context.user_data["extracted"] = extracted
+    context.user_data["step"] = "confirm"
+    pay = _preview_pay(
+        extracted,
+        context.user_data.get("equipment"),
+        context.user_data.get("product_code"),
+        context.user_data.get("optional_addons"),
+    )
+    await message_target.edit_message_text(
+        _format_preview(extracted, pay if not pay.needs_user_input else None),
+        parse_mode="HTML",
+        reply_markup=_confirm_markup(extracted),
+    )
+
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+
+    step = context.user_data.get("step")
+    text = (update.message.text or "").strip()
+    extracted: dict = context.user_data.get("extracted", empty_extraction())
+
+    if step == "await_job_number":
+        digits = re.sub(r"\D", "", text)
+        if len(digits) < 5:
+            await update.message.reply_text("⚠️ Нужен номер работы, напр. 497745")
+            return
+        extracted["job_number"] = digits
+        context.user_data["extracted"] = extracted
+        if not extracted.get("address"):
+            context.user_data["step"] = "await_address"
+            await update.message.reply_text("📍 Теперь введи адрес одной строкой:")
+            return
+        _resolve_work_area(extracted)
+        context.user_data["step"] = "confirm"
+        pay = _preview_pay(extracted)
+        await update.message.reply_text(
+            _format_preview(extracted, pay if not pay.needs_user_input else None),
+            parse_mode="HTML",
+            reply_markup=_confirm_markup(extracted),
+        )
+        return
+
+    if step == "await_address":
+        if len(text) < 8:
+            await update.message.reply_text("⚠️ Адрес слишком короткий. Введи полный адрес.")
+            return
+        extracted["address"] = text
+        context.user_data["extracted"] = extracted
+        _resolve_work_area(extracted)
+        context.user_data["step"] = "confirm"
+        pay = _preview_pay(extracted)
+        await update.message.reply_text(
+            _format_preview(extracted, pay if not pay.needs_user_input else None),
+            parse_mode="HTML",
+            reply_markup=_confirm_markup(extracted),
+        )
+        return
+
+
+async def _process_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    file_ids = context.user_data.get("photo_file_ids", [])
+    if not file_ids:
+        return
+
+    chat_id = update.effective_chat.id
+    status_msg = await context.bot.send_message(chat_id, "🔍 Обрабатываю скриншот(ы)...")
+
+    try:
+        paths = await _download_photos(context, file_ids)
+        extracted = await extract_from_images(paths)
+    except Exception as exc:
+        extracted = empty_extraction()
+        context.user_data["extracted"] = extracted
+        context.user_data["equipment"] = []
+        context.user_data["optional_addons"] = []
+        context.user_data["product_code"] = None
+        context.user_data["step"] = "manual_work_type"
+        if str(exc) == NO_API_KEY_MSG:
+            msg = (
+                "📸 <b>Скрин получен</b>\n\n"
+                "Авто-распознавание выключено (нет OPENAI_API_KEY в .env).\n"
+                "Продолжаем вручную — выбери тип работы:"
+            )
+        elif str(exc) == RATE_LIMIT_MSG:
+            msg = (
+                "📸 <b>Скрин получен</b>\n\n"
+                "⚠️ OpenAI временно недоступен (лимит запросов / нет баланса).\n"
+                "Выбери тип работы вручную — на скрине обычно видно внизу\n"
+                "(New Install, Service Change, Trouble Call…):"
+            )
+        else:
+            msg = (
+                "📸 <b>Скрин получен</b>\n\n"
+                f"⚠️ Авто-распознавание не удалось.\n"
+                "Выбери тип работы вручную:"
+            )
+        await status_msg.edit_text(msg, parse_mode="HTML", reply_markup=work_type_keyboard())
+        return
+
+    context.user_data["extracted"] = extracted
+    context.user_data["equipment"] = []
+    context.user_data["optional_addons"] = []
+    context.user_data["product_code"] = None
+    _resolve_work_area(extracted)
+    context.user_data["step"] = "confirm"
+
+    pay = _preview_pay(extracted)
+    await status_msg.edit_text(
+        _format_preview(extracted, pay if not pay.needs_user_input else None),
+        parse_mode="HTML",
+        reply_markup=_confirm_markup(extracted),
+    )
+
+
+async def _schedule_photo_wait(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    uid = update.effective_user.id
+
+    async def waiter():
+        await asyncio.sleep(PHOTO_WAIT_SECONDS)
+        if context.user_data.get("step") == "collecting_photos":
+            await _process_photos(update, context)
+
+    if uid in _photo_wait_tasks:
+        _photo_wait_tasks[uid].cancel()
+    _photo_wait_tasks[uid] = asyncio.create_task(waiter())
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+
+    photo = update.message.photo[-1]
+    file_id = photo.file_id
+    media_group_id = update.message.media_group_id
+
+    if media_group_id:
+        key = str(media_group_id)
+        if key not in _media_group_buffers:
+            _media_group_buffers[key] = {
+                "user_id": update.effective_user.id,
+                "chat_id": update.effective_chat.id,
+                "file_ids": [],
+                "task": None,
+            }
+
+        buf = _media_group_buffers[key]
+        buf["file_ids"].append(file_id)
+        context.user_data["photo_file_ids"] = buf["file_ids"]
+        context.user_data["step"] = "collecting_photos"
+
+        if buf["task"]:
+            buf["task"].cancel()
+
+        async def process_album():
+            await asyncio.sleep(1.5)
+            context.user_data["photo_file_ids"] = buf["file_ids"]
+            fake_update = update
+            await _process_photos(fake_update, context)
+            _media_group_buffers.pop(key, None)
+
+        buf["task"] = asyncio.create_task(process_album())
+        return
+
+    if context.user_data.get("step") not in (None, "collecting_photos", "waiting_second"):
+        _reset_session(context)
+
+    ids = context.user_data.get("photo_file_ids", [])
+    ids.append(file_id)
+    context.user_data["photo_file_ids"] = ids
+    context.user_data["step"] = "collecting_photos"
+
+    count = len(ids)
+    await update.message.reply_text(
+        f"📸 Получил {count} скрин(ов).\n"
+        f"Отправь второй или нажми «Обработать».\n"
+        f"Авто-обработка через {PHOTO_WAIT_SECONDS} сек.",
+        reply_markup=photo_actions_keyboard(),
+    )
+    await _schedule_photo_wait(update, context)
+
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+
+    query = update.callback_query
+    await query.answer()
+    data = query.data or ""
+    extracted: dict = context.user_data.get("extracted", empty_extraction())
+    db = _get_db()
+
+    if data == "act:cancel":
+        _reset_session(context)
+        await query.edit_message_text("❌ Отменено.")
+        return
+
+    if data == "act:wait":
+        context.user_data["step"] = "waiting_second"
+        await query.edit_message_text(
+            f"📸 Жду второй скрин ({PHOTO_WAIT_SECONDS} сек)...",
+            reply_markup=photo_actions_keyboard(),
+        )
+        return
+
+    if data == "act:process":
+        await query.edit_message_text("🔍 Обрабатываю...")
+        await _process_photos(update, context)
+        return
+
+    if data == "act:worktype":
+        context.user_data["step"] = "manual_work_type"
+        await query.edit_message_text("Выбери тип работы:", reply_markup=work_type_keyboard())
+        return
+
+    if data == "act:back_preview":
+        context.user_data["step"] = "confirm"
+        pay = _preview_pay(extracted, context.user_data.get("equipment"), context.user_data.get("product_code"), context.user_data.get("optional_addons"))
+        await query.edit_message_text(
+            _format_preview(extracted, pay if not pay.needs_user_input else None),
+            parse_mode="HTML",
+            reply_markup=_confirm_markup(extracted),
+        )
+        return
+
+    if data.startswith("area:"):
+        extracted["work_area"] = data[5:]
+        extracted["work_area_source"] = "manual"
+        context.user_data["extracted"] = extracted
+        pay = _preview_pay(
+            extracted,
+            context.user_data.get("equipment"),
+            context.user_data.get("product_code"),
+            context.user_data.get("optional_addons"),
+        )
+        await query.edit_message_text(
+            _format_preview(extracted, pay if not pay.needs_user_input else None),
+            parse_mode="HTML",
+            reply_markup=_confirm_markup(extracted),
+        )
+        return
+
+    if data.startswith("wt:"):
+        work_type = data[3:]
+        extracted["work_type"] = work_type
+        extracted["subtype_codes"] = extracted.get("subtype_codes") or []
+        context.user_data["extracted"] = extracted
+
+        if work_type == "Service Change" and not extracted["subtype_codes"]:
+            context.user_data["step"] = "pick_subtype"
+            await query.edit_message_text("Подтип Service Change:", reply_markup=subtype_keyboard(SERVICE_CHANGE_SUBTYPES))
+            return
+        if work_type == "Special Request" and not extracted["subtype_codes"]:
+            context.user_data["step"] = "pick_subtype"
+            await query.edit_message_text("Подтип Special Request:", reply_markup=subtype_keyboard(SPECIAL_REQUEST_SUBTYPES))
+            return
+        if work_type == "New Install" and not extracted["subtype_codes"]:
+            context.user_data["step"] = "pick_subtype"
+            await query.edit_message_text("Подтип New Install:", reply_markup=subtype_keyboard(NEW_INSTALL_SUBTYPES))
+            return
+
+        await _show_preview_or_ask_details(query, context, extracted)
+        return
+
+    if data.startswith("st:"):
+        subtype = data[3:]
+        if subtype != "Другое":
+            codes = extracted.get("subtype_codes") or []
+            if subtype not in codes:
+                codes.append(subtype)
+            extracted["subtype_codes"] = codes
+        context.user_data["extracted"] = extracted
+        await _show_preview_or_ask_details(query, context, extracted)
+        return
+
+    if data == "act:confirm":
+        rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
+        if not rule:
+            await query.edit_message_text("⚠️ Не удалось определить правило оплаты. Выбери тип работы.", reply_markup=work_type_keyboard())
+            return
+
+        if rule.get("product_prompt") and not context.user_data.get("product_code"):
+            context.user_data["step"] = "product"
+            options = rule["product_prompt"]["options"]
+            await query.edit_message_text("Выбери product code:", reply_markup=product_keyboard(options))
+            return
+
+        pay = _preview_pay(
+            extracted,
+            context.user_data.get("equipment"),
+            context.user_data.get("product_code"),
+            context.user_data.get("optional_addons"),
+        )
+
+        if pay.needs_user_input == "equipment_prompt":
+            context.user_data["step"] = "equipment"
+            kb = equipment_keyboard(
+                db["equipment_prompt_buttons"],
+                context.user_data.get("equipment", []),
+                db.get("manual_addon_codes", []),
+                context.user_data.get("optional_addons", []),
+            )
+            summary = format_equipment_summary(context.user_data.get("equipment", []), db)
+            await query.edit_message_text(
+                "🔧 <b>Service Change UP</b>\n"
+                "Что реально ставил / менял?\n"
+                "• Gateway — один раз\n"
+                "• Wired TV — один раз\n"
+                "• Wireless TV — жми несколько раз (3 коробки = 3 раза)\n\n"
+                f"{summary}",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+            return
+
+        await _save_and_finish(query, context, extracted, pay, rule["id"])
+        return
+
+    if data.startswith("prod:"):
+        context.user_data["product_code"] = data[5:]
+        pay = _preview_pay(extracted, context.user_data.get("equipment"), context.user_data["product_code"], context.user_data.get("optional_addons"))
+        if pay.needs_user_input == "equipment_prompt":
+            context.user_data["step"] = "equipment"
+            kb = equipment_keyboard(
+                db["equipment_prompt_buttons"],
+                context.user_data.get("equipment", []),
+                db.get("manual_addon_codes", []),
+                context.user_data.get("optional_addons", []),
+            )
+            summary = format_equipment_summary(context.user_data.get("equipment", []), db)
+            await query.edit_message_text(
+                f"🔧 Что ставил / менял?\n\n{summary}",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+            return
+        context.user_data["step"] = "confirm"
+        await query.edit_message_text(_format_preview(extracted, pay), parse_mode="HTML", reply_markup=_confirm_markup(extracted))
+        return
+
+    if data.startswith("eq:"):
+        btn_id = data[3:]
+        btn = next(b for b in db["equipment_prompt_buttons"] if b["id"] == btn_id)
+        code = btn["code"]
+        equipment: list[str] = context.user_data.get("equipment", [])
+        if btn.get("allow_repeat"):
+            equipment.append(code)
+        elif code in equipment:
+            equipment.remove(code)
+        else:
+            equipment.append(code)
+        context.user_data["equipment"] = equipment
+        kb = equipment_keyboard(
+            db["equipment_prompt_buttons"],
+            equipment,
+            db.get("manual_addon_codes", []),
+            context.user_data.get("optional_addons", []),
+        )
+        summary = format_equipment_summary(equipment, db)
+        await query.edit_message_text(
+            "🔧 <b>Service Change UP</b>\n"
+            "Что реально ставил / менял?\n\n"
+            f"{summary}",
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+        return
+
+    if data == "act:equip_none":
+        context.user_data["equipment"] = []
+        context.user_data["optional_addons"] = []
+        pay = _preview_pay(extracted, [], context.user_data.get("product_code"), [])
+        rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
+        rule_id = rule["id"] if rule else "manual"
+        await _save_and_finish(query, context, extracted, pay, rule_id)
+        return
+
+    if data.startswith("addon:"):
+        code = data[6:]
+        addons: list[str] = context.user_data.get("optional_addons", [])
+        if code in addons:
+            addons.remove(code)
+        else:
+            addons.append(code)
+        context.user_data["optional_addons"] = addons
+        kb = equipment_keyboard(
+            db["equipment_prompt_buttons"],
+            context.user_data.get("equipment", []),
+            db.get("manual_addon_codes", []),
+            addons,
+        )
+        await query.edit_message_reply_markup(reply_markup=kb)
+        return
+
+    if data == "act:equip_done":
+        pay = _preview_pay(
+            extracted,
+            context.user_data.get("equipment"),
+            context.user_data.get("product_code"),
+            context.user_data.get("optional_addons"),
+        )
+        rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
+        rule_id = rule["id"] if rule else "manual"
+        await _save_and_finish(query, context, extracted, pay, rule_id)
+        return
+
+    if data == "today:refresh" or data == "today:back":
+        await _send_today_list(query, edit=True)
+        return
+
+    if data.startswith("today:view:"):
+        job_number = data.split(":", 2)[2]
+        job = get_job(job_number)
+        if not job:
+            await query.edit_message_text("⚠️ Работа не найдена (возможно уже удалена).")
+            return
+        await query.edit_message_text(
+            _format_today_job(job),
+            parse_mode="HTML",
+            reply_markup=today_job_keyboard(job_number),
+        )
+        return
+
+    if data.startswith("today:delete:"):
+        job_number = data.split(":", 2)[2]
+        job = get_job(job_number)
+        if not job:
+            await query.edit_message_text("⚠️ Работа не найдена.")
+            return
+        await query.edit_message_text(
+            f"🗑 Удалить Job# <code>{job_number}</code>?\n\n"
+            f"Тип: {job.get('work_type', '—')}\n"
+            f"Сумма: <b>${job['total']:.2f}</b>\n\n"
+            "Строки исчезнут из недельного инвойса.",
+            parse_mode="HTML",
+            reply_markup=today_delete_confirm_keyboard(job_number),
+        )
+        return
+
+    if data.startswith("today:delok:"):
+        job_number = data.split(":", 2)[2]
+        ok, removed = delete_job(job_number)
+        if not ok:
+            await query.edit_message_text("⚠️ Не удалось удалить — работа не найдена.")
+            return
+        await query.edit_message_text(
+            f"✅ Удалено Job# <code>{job_number}</code> ({removed} строк).\n\n"
+            "Используй /today чтобы увидеть список.",
+            parse_mode="HTML",
+        )
+        return
+
+    if data.startswith("today:edit:"):
+        job_number = data.split(":", 2)[2]
+        job = get_job(job_number)
+        if not job:
+            await query.edit_message_text("⚠️ Работа не найдена.")
+            return
+        delete_job(job_number)
+        _reset_session(context)
+        extracted = job_to_session_data(job)
+        context.user_data["extracted"] = extracted
+        context.user_data["equipment"] = []
+        context.user_data["optional_addons"] = []
+        context.user_data["product_code"] = None
+        context.user_data["step"] = "confirm"
+        pay = _preview_pay(extracted)
+        await query.edit_message_text(
+            "✏️ <b>Пересчёт</b> — старая запись удалена.\n"
+            "Проверь данные и подтверди заново:\n\n"
+            + _format_preview(extracted, pay if not pay.needs_user_input else None),
+            parse_mode="HTML",
+            reply_markup=_confirm_markup(extracted),
+        )
+        return
+
+
+async def _save_and_finish(query, context, extracted: dict, pay, rule_id: str) -> None:
+    if not extracted.get("job_number"):
+        await query.edit_message_text("⚠️ Нет Job#. Отправь скрин с номером работы или /cancel.")
+        return
+    if not extracted.get("address"):
+        await query.edit_message_text("⚠️ Нет адреса. Отправь скрин с адресом или /cancel.")
+        return
+
+    work_area = extracted.get("work_area") or DEFAULT_WORK_AREA
+    today = miami_now()
+    invoice_rows = pay.to_invoice_rows(
+        TECH_ID,
+        work_area,
+        extracted["address"].upper(),
+        today.date(),
+    )
+
+    save_job(
+        job_number=extracted["job_number"],
+        work_area=work_area,
+        address=extracted["address"].upper(),
+        work_type=extracted.get("work_type") or "",
+        subtype_codes=extracted.get("subtype_codes") or [],
+        rule_id=rule_id,
+        invoice_rows=invoice_rows,
+        account_number=str(extracted.get("account_number") or ""),
+        hookup_type=str(extracted.get("hookup_type") or ""),
+        completion_datetime=today,
+    )
+
+    lines_text = "\n".join(f"  {l.code} ${l.total:.2f}" for l in pay.lines)
+    await query.edit_message_text(
+        f"✅ <b>Сохранено — Job# {extracted['job_number']}</b>\n\n"
+        f"{lines_text}\n"
+        f"<b>За работу: ${pay.total:.2f}</b>\n\n"
+        f"{_format_stats_block()}",
+        parse_mode="HTML",
+    )
+    _reset_session(context)
