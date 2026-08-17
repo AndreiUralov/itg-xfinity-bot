@@ -19,7 +19,10 @@ def db_enabled() -> bool:
 
 
 def _connect():
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    url = DATABASE_URL
+    if "sslmode=" not in url and ".render.com" in url:
+        url = f"{url}{'&' if '?' in url else '?'}sslmode=require"
+    return psycopg.connect(url, row_factory=dict_row)
 
 
 def read_all_rows() -> list[dict[str, str]]:
