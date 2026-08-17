@@ -54,6 +54,7 @@ from bot.settings_store import (  # noqa: E402
     get_effective_daily_goal,
     get_goal_work_days,
     get_weekly_goal,
+    get_work_day,
     save_chat_id,
     set_daily_goal,
     set_weekly_goal_with_daily,
