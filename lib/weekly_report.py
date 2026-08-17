@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,16 @@ def current_payroll_week(reference: date | None = None) -> tuple[date, date]:
 
 
 def load_all_job_lines(directory: Path = JOB_LINES_DIR) -> list[InvoiceLine]:
+    try:
+        sys.path.insert(0, str(ROOT))
+        from bot.storage import read_all_rows
+
+        rows = read_all_rows()
+        if rows:
+            return [_dict_to_line(row) for row in rows]
+    except Exception:
+        pass
+
     csv_path = directory / "jobs.csv"
     if csv_path.exists():
         return load_lines_from_csv(csv_path)

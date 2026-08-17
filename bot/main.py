@@ -16,8 +16,11 @@ sys.path.insert(0, str(ROOT))
 from bot.config import TELEGRAM_BOT_TOKEN, WEBHOOK_URL
 from bot.handlers import (
     cmd_cancel,
+    cmd_goal,
     cmd_help,
     cmd_invoice,
+    cmd_off,
+    cmd_on,
     cmd_start,
     cmd_today,
     cmd_week,
@@ -34,6 +37,9 @@ logger = logging.getLogger("itg.bot")
 
 BOT_COMMANDS = [
     BotCommand("start", "Сводка за день и неделю"),
+    BotCommand("on", "На работе сегодня"),
+    BotCommand("off", "Выходной сегодня"),
+    BotCommand("goal", "Цель на неделю в $"),
     BotCommand("today", "Работы за сегодня — изменить / удалить"),
     BotCommand("week", "Итог текущей недели"),
     BotCommand("invoice", "PDF инвойс ATN"),
@@ -65,6 +71,9 @@ def main() -> None:
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("on", cmd_on))
+    app.add_handler(CommandHandler("off", cmd_off))
+    app.add_handler(CommandHandler("goal", cmd_goal))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("week", cmd_week))

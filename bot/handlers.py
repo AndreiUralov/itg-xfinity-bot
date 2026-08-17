@@ -40,8 +40,20 @@ from bot.keyboards import (  # noqa: E402
     today_job_keyboard,
     today_list_keyboard,
     work_type_keyboard,
+    workday_keyboard,
 )
 from bot.jobs_manager import delete_job, find_existing_job, get_job, get_today_jobs, job_to_session_data, today_totals  # noqa: E402
+from bot.job_hints import format_job_hint, lookup_job_hint  # noqa: E402
+from bot.quick_input import parse_quick_input  # noqa: E402
+from bot.settings_store import (  # noqa: E402
+    clear_weekly_goal,
+    count_work_days,
+    get_weekly_goal,
+    get_work_day,
+    save_chat_id,
+    set_weekly_goal,
+    set_work_day,
+)
 from bot.storage import save_job, week_bounds, week_totals  # noqa: E402
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
 from datetime_miami import miami_now  # noqa: E402
@@ -112,9 +124,15 @@ def _duplicate_notice(existing: dict[str, Any] | None) -> str:
 
 def _format_preview(data: dict[str, Any], pay_result=None, *, existing: dict[str, Any] | None = None) -> str:
     notice = _duplicate_notice(existing)
+    hint_line = ""
+    jn = data.get("job_number")
+    if jn:
+        hint = lookup_job_hint(jn)
+        if hint:
+            hint_line = format_job_hint(hint) + "\n\n"
     subtypes = ", ".join(data.get("subtype_codes") or []) or "—"
     lines = [
-        f"{notice}📋 <b>Распознано</b>",
+        f"{notice}{hint_line}📋 <b>Распознано</b>",
         f"Job#: <code>{data.get('job_number') or '?'}</code>",
         f"Адрес: {data.get('address') or '—'}",
         f"Work Area: <b>{_work_area_label(data)}</b>",
@@ -167,32 +185,144 @@ def _jobs_word(n: int) -> str:
     return "работ"
 
 
+def _workday_status_line() -> str:
+    today = miami_now().date()
+    status = get_work_day(today, TECH_ID)
+    if status == "working":
+        return "🟢 Сегодня: <b>на работе</b>"
+    if status == "off":
+        return "🏖 Сегодня: <b>выходной</b>"
+    return "⚪ Сегодня: статус не отмечен (/on или /off)"
+
+
+def _goal_progress_line() -> str:
+    today = miami_now().date()
+    week_start, _ = week_bounds(today)
+    goal = get_weekly_goal(week_start, TECH_ID)
+    if not goal:
+        return ""
+    week = week_totals(week_start)
+    pct = min(100, round(week["production"] / goal * 100)) if goal else 0
+    return f"🎯 <b>Цель:</b> ${week['production']:,.2f} / ${goal:,.2f} ({pct}%)"
+
+
 def _format_stats_block() -> str:
     day = today_totals()
     week = week_totals()
-    return (
+    work_days = count_work_days(week["week_start"], miami_now().date(), TECH_ID)
+    block = (
+        f"{_workday_status_line()}\n"
         f"📈 <b>Сегодня:</b> {day['job_count']} {_jobs_word(day['job_count'])}, "
         f"<b>${day['production']:,.2f}</b>\n"
         f"📊 <b>Неделя</b> ({week['week_start']}–{week['week_end']}): "
         f"{week['job_count']} {_jobs_word(week['job_count'])}, "
         f"<b>${week['production']:,.2f}</b>"
     )
+    if work_days:
+        block += f" · {work_days} раб. дн."
+    goal_line = _goal_progress_line()
+    if goal_line:
+        block += f"\n{goal_line}"
+    return block
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update.effective_user.id):
         return await _deny(update)
+    save_chat_id(update.effective_chat.id)
     _reset_session(context)
     await update.message.reply_text(
         "👋 <b>ITG Job Tracker</b>\n\n"
         f"{_format_stats_block()}\n\n"
-        "Отправь скриншот(ы) из Tech360 — 1 или 2 фото одним сообщением.\n\n"
+        "Отправь скриншот(ы) из Tech360 — 1 или 2 фото одним сообщением.\n"
+        "Или быстрый ввод: <code>549110 trouble</code>\n\n"
         "<b>Команды:</b>\n"
+        "/on — на работе сегодня · /off — выходной\n"
+        "/goal 2000 — цель на неделю в $\n"
         "/week — итог текущей недели (Вс–Сб)\n"
         "/today — работы за сегодня (изменить / удалить)\n"
         "/invoice — PDF в формате ATN\n"
         "/cancel — отменить текущую работу\n"
         "/help — справка",
+        parse_mode="HTML",
+    )
+
+
+async def cmd_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+    save_chat_id(update.effective_chat.id)
+    today = miami_now().date()
+    set_work_day(today, TECH_ID, "working")
+    await update.message.reply_text(
+        f"🟢 Отмечено: <b>на работе</b> ({today.strftime('%d.%m.%Y')})\n\n"
+        f"{_format_stats_block()}",
+        parse_mode="HTML",
+    )
+
+
+async def cmd_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+    save_chat_id(update.effective_chat.id)
+    today = miami_now().date()
+    set_work_day(today, TECH_ID, "off")
+    await update.message.reply_text(
+        f"🏖 Отмечено: <b>выходной</b> ({today.strftime('%d.%m.%Y')})",
+        parse_mode="HTML",
+    )
+
+
+async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+    save_chat_id(update.effective_chat.id)
+    today = miami_now().date()
+    week_start, week_end = week_bounds(today)
+    args = (update.message.text or "").split(maxsplit=1)
+
+    if len(args) < 2:
+        goal = get_weekly_goal(week_start, TECH_ID)
+        week = week_totals(week_start)
+        if not goal:
+            await update.message.reply_text(
+                f"🎯 Цель на неделю {week_start}–{week_end} не задана.\n"
+                "Пример: <code>/goal 2000</code>",
+                parse_mode="HTML",
+            )
+            return
+        pct = min(100, round(week["production"] / goal * 100))
+        await update.message.reply_text(
+            f"🎯 <b>Цель недели</b> {week_start}–{week_end}\n\n"
+            f"Прогресс: <b>${week['production']:,.2f}</b> / ${goal:,.2f} ({pct}%)\n"
+            f"Осталось: <b>${max(0, goal - week['production']):,.2f}</b>\n\n"
+            "Сбросить: <code>/goal off</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    value = args[1].strip().lower().replace("$", "").replace(",", "")
+    if value in ("off", "clear", "0", "сброс"):
+        clear_weekly_goal(week_start, TECH_ID)
+        await update.message.reply_text("🎯 Цель на эту неделю сброшена.")
+        return
+
+    try:
+        amount = float(value)
+    except ValueError:
+        await update.message.reply_text("⚠️ Пример: <code>/goal 2000</code>", parse_mode="HTML")
+        return
+
+    if amount <= 0:
+        await update.message.reply_text("⚠️ Цель должна быть больше 0.")
+        return
+
+    set_weekly_goal(week_start, TECH_ID, amount)
+    week = week_totals(week_start)
+    pct = min(100, round(week["production"] / amount * 100))
+    await update.message.reply_text(
+        f"🎯 Цель на неделю: <b>${amount:,.2f}</b>\n"
+        f"Уже заработано: ${week['production']:,.2f} ({pct}%)",
         parse_mode="HTML",
     )
 
@@ -207,8 +337,15 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "3. Проверь данные → подтверди\n"
         "4. Выбери оборудование (если нужно)\n"
         "5. Работа сохранится для недельного инвойса ATN\n\n"
+        "<b>Быстрый ввод без скрина:</b>\n"
+        "<code>549110 trouble</code> · <code>508836 service</code>\n\n"
+        "/on — на работе · /off — выходной\n"
+        "/goal 2000 — цель на неделю в $\n"
         "/today — посмотреть сегодняшние работы, удалить или пересчитать при ошибке.\n\n"
-        "По понедельникам в 7:00 придёт PDF за прошлую неделю.",
+        "🌅 Утром (7:00) — напоминание отметить рабочий день.\n"
+        "🌙 Вечером (21:00) — итог дня.\n"
+        "📋 По понедельникам (7:00) — PDF за прошлую неделю.\n"
+        "💾 По воскресеньям (21:00) — бэкап PDF недели.",
         parse_mode="HTML",
     )
 
@@ -232,6 +369,11 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     truck = db["deductions"]["truck"]["full_week"]
     meter = db["deductions"]["meter"]["per_week"]
     net = round(totals["production"] - truck - meter, 2)
+    work_days = count_work_days(totals["week_start"], totals["week_end"], TECH_ID)
+    goal_line = _goal_progress_line()
+    extra = f"\n{goal_line}" if goal_line else ""
+    if work_days:
+        extra += f"\nРабочих дней: {work_days}"
     await update.message.reply_text(
         f"📊 <b>Неделя {totals['week_start']} — {totals['week_end']}</b>\n\n"
         f"Работ: {totals['job_count']}\n"
@@ -239,7 +381,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Production: <b>${totals['production']:,.2f}</b>\n"
         f"Truck: (${truck:,.2f})\n"
         f"Meter: (${meter:,.2f})\n"
-        f"≈ Net: <b>${net:,.2f}</b>",
+        f"≈ Net: <b>${net:,.2f}</b>{extra}",
         parse_mode="HTML",
     )
 
@@ -338,6 +480,58 @@ async def _download_photos(context: ContextTypes.DEFAULT_TYPE, file_ids: list[st
     return paths
 
 
+def _apply_hint_to_extracted(extracted: dict[str, Any]) -> dict[str, Any]:
+    hint = lookup_job_hint(extracted.get("job_number", ""))
+    if not hint:
+        return extracted
+    if not extracted.get("work_type") and hint.get("work_type"):
+        extracted["work_type"] = hint["work_type"]
+    if not extracted.get("subtype_codes") and hint.get("subtype_codes"):
+        extracted["subtype_codes"] = list(hint["subtype_codes"])
+    if not extracted.get("hookup_type") and hint.get("hookup_type"):
+        extracted["hookup_type"] = hint["hookup_type"]
+    if not extracted.get("address") and hint.get("address"):
+        extracted["address"] = hint["address"]
+    return extracted
+
+
+async def _start_quick_input(update: Update, context: ContextTypes.DEFAULT_TYPE, extracted: dict) -> None:
+    extracted = _apply_hint_to_extracted(extracted)
+    context.user_data["extracted"] = extracted
+    context.user_data["equipment"] = []
+    context.user_data["optional_addons"] = []
+    context.user_data["product_code"] = None
+
+    intro = f"⚡ Быстрый ввод Job# <code>{extracted['job_number']}</code>"
+    hint = lookup_job_hint(extracted["job_number"])
+    if hint:
+        intro += f"\n{format_job_hint(hint)}"
+
+    if not extracted.get("work_type"):
+        context.user_data["step"] = "manual_work_type"
+        await update.message.reply_text(
+            f"{intro}\n\nВыбери тип работы:",
+            parse_mode="HTML",
+            reply_markup=work_type_keyboard(),
+        )
+        return
+
+    if not extracted.get("address"):
+        context.user_data["step"] = "await_address"
+        await update.message.reply_text(f"{intro}\n\n📍 Введи адрес одной строкой:", parse_mode="HTML")
+        return
+
+    _resolve_work_area(extracted)
+    context.user_data["step"] = "confirm"
+    pay = _preview_pay(extracted)
+    await update.message.reply_text(
+        f"{intro}\n\n"
+        + _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
+        parse_mode="HTML",
+        reply_markup=_confirm_markup(extracted),
+    )
+
+
 def _confirm_markup(data: dict[str, Any]):
     return confirm_keyboard(data.get("work_area") or DEFAULT_WORK_AREA)
 
@@ -423,6 +617,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             reply_markup=_confirm_markup(extracted),
         )
         return
+
+    if not step:
+        quick = parse_quick_input(text)
+        if quick:
+            await _start_quick_input(update, context, {**empty_extraction(), **quick})
+            return
 
 
 async def _process_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -594,6 +794,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
             rule_id = rule["id"] if rule else "manual"
         await _save_and_finish(query, context, extracted, pay, rule_id)
+        return
+
+    if data == "work:on":
+        save_chat_id(query.message.chat_id)
+        today = miami_now().date()
+        set_work_day(today, TECH_ID, "working")
+        await query.edit_message_text(
+            f"🟢 <b>На работе</b> — {today.strftime('%d.%m.%Y')}\n\n{_format_stats_block()}",
+            parse_mode="HTML",
+        )
+        return
+
+    if data == "work:off":
+        save_chat_id(query.message.chat_id)
+        today = miami_now().date()
+        set_work_day(today, TECH_ID, "off")
+        await query.edit_message_text(
+            f"🏖 <b>Выходной</b> — {today.strftime('%d.%m.%Y')}",
+            parse_mode="HTML",
+        )
         return
 
     if data == "act:wait":

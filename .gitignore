@@ -4,5 +4,6 @@ __pycache__/
 output/
 data/job_lines/jobs.csv
 data/job_lines/archive/
+data/bot_settings.json
 .venv/
 venv/

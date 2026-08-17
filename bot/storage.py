@@ -136,6 +136,13 @@ def save_job(
             writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
             writer.writerows(rows_to_write)
 
+    try:
+        from bot.settings_store import set_work_day
+
+        set_work_day(completed.date(), TECH_ID, "working")
+    except Exception:
+        pass
+
     backup_dir = ROOT / "data" / "job_lines" / "archive"
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / f"{now.strftime('%Y%m%d_%H%M%S')}_{job_number}.json"

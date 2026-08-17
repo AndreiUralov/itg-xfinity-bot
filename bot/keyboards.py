@@ -15,6 +15,17 @@ WORK_TYPES = [
 ]
 
 
+def workday_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🟢 На работе", callback_data="work:on"),
+                InlineKeyboardButton("🏖 Выходной", callback_data="work:off"),
+            ],
+        ]
+    )
+
+
 def photo_actions_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [

@@ -68,6 +68,9 @@ def main() -> None:
             cur.execute(stmt)
         conn.commit()
     print("Database schema ready.")
+    from bot.settings_store import ensure_schema as ensure_settings_schema
+
+    ensure_settings_schema()
     _seed_if_empty()
 
 
