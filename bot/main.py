@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
 from pathlib import Path
 
-from telegram import BotCommand
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
+from telegram import BotCommand, Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -56,6 +57,33 @@ async def _register_commands(application: Application) -> None:
         logger.warning("Could not register bot commands (non-fatal): %s", exc)
 
 
+async def _scheduler_loop() -> None:
+    while True:
+        await asyncio.sleep(1800)
+        try:
+            from bot.scheduler_runner import run_due_tasks
+
+            ran = run_due_tasks()
+            if ran:
+                logger.info("Scheduled tasks ran: %s", ", ".join(ran))
+        except Exception as exc:
+            logger.warning("Scheduler tick failed: %s", exc)
+
+
+async def _maybe_run_scheduled_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        from bot.scheduler_runner import run_due_tasks
+
+        run_due_tasks()
+    except Exception:
+        pass
+
+
+async def _post_init(application: Application) -> None:
+    await _register_commands(application)
+    asyncio.create_task(_scheduler_loop())
+
+
 def main() -> None:
     if not TELEGRAM_BOT_TOKEN:
         raise SystemExit(
@@ -66,9 +94,11 @@ def main() -> None:
     app = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
-        .post_init(_register_commands)
+        .post_init(_post_init)
         .build()
     )
+
+    app.add_handler(TypeHandler(Update, _maybe_run_scheduled_tasks), group=-1)
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("on", cmd_on))

@@ -28,26 +28,3 @@ services:
         value: Broward
       - key: PHOTO_WAIT_SECONDS
         value: "60"
-
-  - type: cron
-    name: itg-xfinity-scheduler
-    runtime: python
-    plan: free
-    region: virginia
-    branch: main
-    schedule: "0 * * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python scripts/init_db.py && python scripts/scheduled_tasks.py
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.12.0"
-      - key: DATABASE_URL
-        sync: false
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: TELEGRAM_CHAT_ID
-        sync: false
-      - key: TECH_ID
-        value: I0KF
-      - key: DEFAULT_WORK_AREA
-        value: Broward
