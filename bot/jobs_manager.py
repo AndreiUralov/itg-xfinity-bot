@@ -92,6 +92,52 @@ def get_job(job_number: str | int, day: date | None = None) -> dict[str, Any] | 
     return None
 
 
+def find_existing_job(job_number: str | int) -> dict[str, Any] | None:
+    """Return saved job summary if job_number already exists today or this week."""
+    if not job_number:
+        return None
+
+    today = miami_now().date()
+    today_job = get_job(job_number, today)
+    if today_job:
+        return {**today_job, "scope": "today", "day": today.isoformat()}
+
+    from bot.storage import week_bounds
+
+    week_start, week_end = week_bounds(today)
+    matching_rows = [
+        r
+        for r in _read_all_rows()
+        if str(r["job_number"]) == str(job_number) and week_start <= _row_day(r) <= week_end
+    ]
+    if not matching_rows:
+        return None
+
+    grouped = _group_rows(matching_rows)
+    lines = grouped[str(job_number)]
+    total = round(sum(float(r["item_total"]) for r in lines), 2)
+    first = lines[0]
+    row_day = _row_day(first)
+    codes = ", ".join(f"{r['job_code']} ${float(r['item_total']):.2f}" for r in lines)
+    return {
+        "job_number": str(job_number),
+        "work_type": first.get("work_type", ""),
+        "work_area": first.get("work_area", ""),
+        "address": first.get("address", ""),
+        "account_number": first.get("account_number", ""),
+        "hookup_type": first.get("hookup_type", ""),
+        "subtype_codes": first.get("subtype_codes", ""),
+        "rule_id": first.get("rule_id", ""),
+        "completion_date": first.get("completion_date", ""),
+        "total": total,
+        "codes": codes,
+        "line_count": len(lines),
+        "rows": lines,
+        "scope": "week",
+        "day": row_day.isoformat(),
+    }
+
+
 def delete_job(job_number: str | int, day: date | None = None) -> tuple[bool, int]:
     """Remove all CSV lines for job_number on the given day. Returns (ok, removed_count)."""
     target = day or miami_now().date()

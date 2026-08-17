@@ -30,6 +30,7 @@ from bot.keyboards import (  # noqa: E402
     SERVICE_CHANGE_SUBTYPES,
     SPECIAL_REQUEST_SUBTYPES,
     confirm_keyboard,
+    duplicate_confirm_keyboard,
     equipment_keyboard,
     format_equipment_summary,
     photo_actions_keyboard,
@@ -40,7 +41,7 @@ from bot.keyboards import (  # noqa: E402
     today_list_keyboard,
     work_type_keyboard,
 )
-from bot.jobs_manager import delete_job, get_job, get_today_jobs, job_to_session_data, today_totals  # noqa: E402
+from bot.jobs_manager import delete_job, find_existing_job, get_job, get_today_jobs, job_to_session_data, today_totals  # noqa: E402
 from bot.storage import save_job, week_bounds, week_totals  # noqa: E402
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
 from datetime_miami import miami_now  # noqa: E402
@@ -93,10 +94,27 @@ def _work_area_label(data: dict[str, Any]) -> str:
     return f"{area} ({hints.get(source, source)})"
 
 
-def _format_preview(data: dict[str, Any], pay_result=None) -> str:
+def _duplicate_notice(existing: dict[str, Any] | None) -> str:
+    if not existing:
+        return ""
+    jn = existing["job_number"]
+    total = float(existing["total"])
+    if existing.get("scope") == "today":
+        return (
+            f"⚠️ <b>Job# {jn} уже сохранён сегодня</b> (${total:.2f}).\n"
+            "Похоже на повторную загрузку того же скрина.\n\n"
+        )
+    day = existing.get("day", "")
+    return (
+        f"⚠️ <b>Job# {jn} уже есть на этой неделе</b> ({day}, ${total:.2f}).\n\n"
+    )
+
+
+def _format_preview(data: dict[str, Any], pay_result=None, *, existing: dict[str, Any] | None = None) -> str:
+    notice = _duplicate_notice(existing)
     subtypes = ", ".join(data.get("subtype_codes") or []) or "—"
     lines = [
-        "📋 <b>Распознано</b>",
+        f"{notice}📋 <b>Распознано</b>",
         f"Job#: <code>{data.get('job_number') or '?'}</code>",
         f"Адрес: {data.get('address') or '—'}",
         f"Work Area: <b>{_work_area_label(data)}</b>",
@@ -113,6 +131,15 @@ def _format_preview(data: dict[str, Any], pay_result=None) -> str:
             lines.append(f"  {line.code} → ${line.total:.2f}")
         lines.append(f"<b>Итого: ${pay_result.total:.2f}</b>")
     return "\n".join(lines)
+
+
+def _existing_for_job(data: dict[str, Any]) -> dict[str, Any] | None:
+    if data.get("from_edit"):
+        return None
+    job_number = data.get("job_number")
+    if not job_number:
+        return None
+    return find_existing_job(job_number)
 
 
 def _preview_pay(data: dict, equipment: list[str] | None = None, product_code: str | None = None, addons: list[str] | None = None):
@@ -342,7 +369,11 @@ async def _show_preview_or_ask_details(message_target, context, extracted: dict)
         context.user_data.get("optional_addons"),
     )
     await message_target.edit_message_text(
-        _format_preview(extracted, pay if not pay.needs_user_input else None),
+        _format_preview(
+            extracted,
+            pay if not pay.needs_user_input else None,
+            existing=_existing_for_job(extracted),
+        ),
         parse_mode="HTML",
         reply_markup=_confirm_markup(extracted),
     )
@@ -371,7 +402,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted)
         await update.message.reply_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -387,7 +418,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted)
         await update.message.reply_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -443,7 +474,7 @@ async def _process_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     pay = _preview_pay(extracted)
     await status_msg.edit_text(
-        _format_preview(extracted, pay if not pay.needs_user_input else None),
+        _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
         parse_mode="HTML",
         reply_markup=_confirm_markup(extracted),
     )
@@ -531,6 +562,40 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text("❌ Отменено.")
         return
 
+    if data == "dup:cancel":
+        context.user_data.pop("allow_duplicate", None)
+        context.user_data.pop("pending_rule_id", None)
+        extracted = context.user_data.get("extracted", empty_extraction())
+        pay = _preview_pay(
+            extracted,
+            context.user_data.get("equipment"),
+            context.user_data.get("product_code"),
+            context.user_data.get("optional_addons"),
+        )
+        context.user_data["step"] = "confirm"
+        await query.edit_message_text(
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
+            parse_mode="HTML",
+            reply_markup=_confirm_markup(extracted),
+        )
+        return
+
+    if data == "dup:save":
+        context.user_data["allow_duplicate"] = True
+        extracted = context.user_data.get("extracted", empty_extraction())
+        pay = _preview_pay(
+            extracted,
+            context.user_data.get("equipment"),
+            context.user_data.get("product_code"),
+            context.user_data.get("optional_addons"),
+        )
+        rule_id = context.user_data.pop("pending_rule_id", None)
+        if not rule_id:
+            rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
+            rule_id = rule["id"] if rule else "manual"
+        await _save_and_finish(query, context, extracted, pay, rule_id)
+        return
+
     if data == "act:wait":
         context.user_data["step"] = "waiting_second"
         await query.edit_message_text(
@@ -553,7 +618,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted, context.user_data.get("equipment"), context.user_data.get("product_code"), context.user_data.get("optional_addons"))
         await query.edit_message_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -570,7 +635,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             context.user_data.get("optional_addons"),
         )
         await query.edit_message_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -649,6 +714,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
+        existing = _existing_for_job(extracted)
+        if existing and existing.get("scope") == "today" and not context.user_data.get("allow_duplicate"):
+            context.user_data["pending_rule_id"] = rule["id"]
+            await query.edit_message_text(
+                _duplicate_notice(existing)
+                + f"Сохранить Job# <code>{extracted['job_number']}</code> ещё раз?",
+                parse_mode="HTML",
+                reply_markup=duplicate_confirm_keyboard(),
+            )
+            return
+
         await _save_and_finish(query, context, extracted, pay, rule["id"])
         return
 
@@ -671,7 +747,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
         context.user_data["step"] = "confirm"
-        await query.edit_message_text(_format_preview(extracted, pay), parse_mode="HTML", reply_markup=_confirm_markup(extracted))
+        await query.edit_message_text(
+            _format_preview(extracted, pay, existing=_existing_for_job(extracted)),
+            parse_mode="HTML",
+            reply_markup=_confirm_markup(extracted),
+        )
         return
 
     if data.startswith("eq:"):
@@ -708,6 +788,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         pay = _preview_pay(extracted, [], context.user_data.get("product_code"), [])
         rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
         rule_id = rule["id"] if rule else "manual"
+        existing = _existing_for_job(extracted)
+        if existing and existing.get("scope") == "today" and not context.user_data.get("allow_duplicate"):
+            context.user_data["pending_rule_id"] = rule_id
+            await query.edit_message_text(
+                _duplicate_notice(existing)
+                + f"Сохранить Job# <code>{extracted['job_number']}</code> ещё раз?",
+                parse_mode="HTML",
+                reply_markup=duplicate_confirm_keyboard(),
+            )
+            return
         await _save_and_finish(query, context, extracted, pay, rule_id)
         return
 
@@ -737,6 +827,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
         rule_id = rule["id"] if rule else "manual"
+        existing = _existing_for_job(extracted)
+        if existing and existing.get("scope") == "today" and not context.user_data.get("allow_duplicate"):
+            context.user_data["pending_rule_id"] = rule_id
+            await query.edit_message_text(
+                _duplicate_notice(existing)
+                + f"Сохранить Job# <code>{extracted['job_number']}</code> ещё раз?",
+                parse_mode="HTML",
+                reply_markup=duplicate_confirm_keyboard(),
+            )
+            return
         await _save_and_finish(query, context, extracted, pay, rule_id)
         return
 
@@ -804,7 +904,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(
             "✏️ <b>Пересчёт</b> — старая запись удалена.\n"
             "Проверь данные и подтверди заново:\n\n"
-            + _format_preview(extracted, pay if not pay.needs_user_input else None),
+            + _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -849,4 +949,6 @@ async def _save_and_finish(query, context, extracted: dict, pay, rule_id: str) -
         f"{_format_stats_block()}",
         parse_mode="HTML",
     )
+    context.user_data.pop("allow_duplicate", None)
+    context.user_data.pop("pending_rule_id", None)
     _reset_session(context)

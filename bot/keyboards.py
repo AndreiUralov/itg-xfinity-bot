@@ -27,6 +27,17 @@ def photo_actions_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def duplicate_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Всё равно сохранить", callback_data="dup:save"),
+                InlineKeyboardButton("❌ Отмена", callback_data="dup:cancel"),
+            ],
+        ]
+    )
+
+
 def confirm_keyboard(work_area: str = "Broward") -> InlineKeyboardMarkup:
     broward_mark = "✓ " if work_area == "Broward" else ""
     miami_mark = "✓ " if work_area == "Miami" else ""
