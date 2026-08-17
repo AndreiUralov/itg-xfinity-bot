@@ -38,6 +38,23 @@ CREATE INDEX IF NOT EXISTS idx_job_lines_job_number ON job_lines(job_number);
 """
 
 
+def _seed_if_empty() -> None:
+    import csv
+
+    from bot.db_store import append_rows, read_all_rows
+
+    seed_path = ROOT / "data" / "seed_jobs.csv"
+    if not seed_path.exists():
+        return
+    if read_all_rows():
+        return
+    rows = list(csv.DictReader(seed_path.open(encoding="utf-8")))
+    if not rows:
+        return
+    append_rows(rows)
+    print(f"Seeded {len(rows)} job lines from {seed_path.name}.")
+
+
 def main() -> None:
     if not db_enabled():
         print("DATABASE_URL not set — skip DB init (using local CSV).")
@@ -51,6 +68,7 @@ def main() -> None:
             cur.execute(stmt)
         conn.commit()
     print("Database schema ready.")
+    _seed_if_empty()
 
 
 if __name__ == "__main__":
