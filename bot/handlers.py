@@ -45,13 +45,18 @@ from bot.keyboards import (  # noqa: E402
 from bot.jobs_manager import delete_job, find_existing_job, get_job, get_today_jobs, job_to_session_data, today_totals  # noqa: E402
 from bot.job_hints import format_job_hint, lookup_job_hint  # noqa: E402
 from bot.quick_input import parse_quick_input  # noqa: E402
+from bot.goals import daily_goal_progress_line, goals_progress_block, weekly_goal_progress_line  # noqa: E402
 from bot.settings_store import (  # noqa: E402
+    clear_daily_goal,
     clear_weekly_goal,
     count_work_days,
+    get_daily_goal,
+    get_effective_daily_goal,
+    get_goal_work_days,
     get_weekly_goal,
-    get_work_day,
     save_chat_id,
-    set_weekly_goal,
+    set_daily_goal,
+    set_weekly_goal_with_daily,
     set_work_day,
 )
 from bot.storage import save_job, week_bounds, week_totals  # noqa: E402
@@ -196,14 +201,7 @@ def _workday_status_line() -> str:
 
 
 def _goal_progress_line() -> str:
-    today = miami_now().date()
-    week_start, _ = week_bounds(today)
-    goal = get_weekly_goal(week_start, TECH_ID)
-    if not goal:
-        return ""
-    week = week_totals(week_start)
-    pct = min(100, round(week["production"] / goal * 100)) if goal else 0
-    return f"🎯 <b>Цель:</b> ${week['production']:,.2f} / ${goal:,.2f} ({pct}%)"
+    return goals_progress_block()
 
 
 def _format_stats_block() -> str:
@@ -220,9 +218,9 @@ def _format_stats_block() -> str:
     )
     if work_days:
         block += f" · {work_days} раб. дн."
-    goal_line = _goal_progress_line()
-    if goal_line:
-        block += f"\n{goal_line}"
+    goal_block = _goal_progress_line()
+    if goal_block:
+        block += f"\n{goal_block}"
     return block
 
 
@@ -238,7 +236,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Или быстрый ввод: <code>549110 trouble</code>\n\n"
         "<b>Команды:</b>\n"
         "/on — на работе сегодня · /off — выходной\n"
-        "/goal 2000 — цель на неделю в $\n"
+        "/goal 1755 — цель на неделю (дневная авто)\n"
         "/week — итог текущей недели (Вс–Сб)\n"
         "/today — работы за сегодня (изменить / удалить)\n"
         "/invoice — PDF в формате ATN\n"
@@ -279,50 +277,98 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     save_chat_id(update.effective_chat.id)
     today = miami_now().date()
     week_start, week_end = week_bounds(today)
-    args = (update.message.text or "").split(maxsplit=1)
+    parts = (update.message.text or "").split()
+    args = parts[1:]
 
-    if len(args) < 2:
-        goal = get_weekly_goal(week_start, TECH_ID)
-        week = week_totals(week_start)
-        if not goal:
+    if not args:
+        week_goal = get_weekly_goal(week_start, TECH_ID)
+        day_goal = get_effective_daily_goal(week_start, TECH_ID)
+        if not week_goal and not day_goal:
             await update.message.reply_text(
-                f"🎯 Цель на неделю {week_start}–{week_end} не задана.\n"
-                "Пример: <code>/goal 2000</code>",
+                f"🎯 Цели не заданы.\n\n"
+                f"Неделя: <code>/goal 1755</code> (авто-день ≈ $351 при 5 днях)\n"
+                f"День: <code>/goal day 351</code>",
                 parse_mode="HTML",
             )
             return
-        pct = min(100, round(week["production"] / goal * 100))
+        lines = ["🎯 <b>Цели</b>\n"]
+        if day_goal:
+            lines.append(daily_goal_progress_line())
+        if week_goal:
+            lines.append(weekly_goal_progress_line())
+        lines.append("\nСбросить всё: <code>/goal off</code>")
+        lines.append("Только день: <code>/goal day off</code>")
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        return
+
+    if args[0].lower() in ("off", "clear", "сброс", "0"):
+        clear_weekly_goal(week_start, TECH_ID)
+        clear_daily_goal(TECH_ID)
+        await update.message.reply_text("🎯 Недельная и дневная цели сброшены.")
+        return
+
+    if args[0].lower() in ("day", "день", "d"):
+        if len(args) < 2:
+            day_goal = get_effective_daily_goal(week_start, TECH_ID)
+            if not day_goal:
+                await update.message.reply_text(
+                    "Дневная цель не задана.\nПример: <code>/goal day 351</code>",
+                    parse_mode="HTML",
+                )
+                return
+            await update.message.reply_text(
+                f"📍 Дневная цель: <b>${day_goal:,.2f}</b>\n{daily_goal_progress_line()}",
+                parse_mode="HTML",
+            )
+            return
+        if args[1].lower() in ("off", "clear", "сброс", "0"):
+            clear_daily_goal(TECH_ID)
+            await update.message.reply_text("📍 Дневная цель сброшена.")
+            return
+        try:
+            amount = float(args[1].replace("$", "").replace(",", ""))
+        except ValueError:
+            await update.message.reply_text("⚠️ Пример: <code>/goal day 351</code>", parse_mode="HTML")
+            return
+        if amount <= 0:
+            await update.message.reply_text("⚠️ Цель должна быть больше 0.")
+            return
+        set_daily_goal(TECH_ID, amount)
         await update.message.reply_text(
-            f"🎯 <b>Цель недели</b> {week_start}–{week_end}\n\n"
-            f"Прогресс: <b>${week['production']:,.2f}</b> / ${goal:,.2f} ({pct}%)\n"
-            f"Осталось: <b>${max(0, goal - week['production']):,.2f}</b>\n\n"
-            "Сбросить: <code>/goal off</code>",
+            f"📍 Дневная цель: <b>${amount:,.2f}</b>\n{daily_goal_progress_line()}",
             parse_mode="HTML",
         )
         return
 
-    value = args[1].strip().lower().replace("$", "").replace(",", "")
-    if value in ("off", "clear", "0", "сброс"):
-        clear_weekly_goal(week_start, TECH_ID)
-        await update.message.reply_text("🎯 Цель на эту неделю сброшена.")
-        return
-
     try:
-        amount = float(value)
+        amount = float(args[0].replace("$", "").replace(",", ""))
     except ValueError:
-        await update.message.reply_text("⚠️ Пример: <code>/goal 2000</code>", parse_mode="HTML")
+        await update.message.reply_text(
+            "⚠️ Примеры:\n<code>/goal 1755</code>\n<code>/goal day 351</code>",
+            parse_mode="HTML",
+        )
         return
 
     if amount <= 0:
         await update.message.reply_text("⚠️ Цель должна быть больше 0.")
         return
 
-    set_weekly_goal(week_start, TECH_ID, amount)
+    work_days = None
+    if len(args) >= 2:
+        try:
+            work_days = int(args[1])
+        except ValueError:
+            pass
+
+    daily = set_weekly_goal_with_daily(week_start, TECH_ID, amount, work_days=work_days)
+    days = get_goal_work_days(TECH_ID)
     week = week_totals(week_start)
     pct = min(100, round(week["production"] / amount * 100))
     await update.message.reply_text(
         f"🎯 Цель на неделю: <b>${amount:,.2f}</b>\n"
-        f"Уже заработано: ${week['production']:,.2f} ({pct}%)",
+        f"📍 Дневная цель: <b>${daily:,.2f}</b> ({days} раб. дн.)\n"
+        f"Уже за неделю: ${week['production']:,.2f} ({pct}%)\n"
+        f"{daily_goal_progress_line()}",
         parse_mode="HTML",
     )
 
@@ -340,7 +386,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>Быстрый ввод без скрина:</b>\n"
         "<code>549110 trouble</code> · <code>508836 service</code>\n\n"
         "/on — на работе · /off — выходной\n"
-        "/goal 2000 — цель на неделю в $\n"
+        "/goal 1755 — цель на неделю (дневная авто)\n"
         "/today — посмотреть сегодняшние работы, удалить или пересчитать при ошибке.\n\n"
         "🌅 Утром (7:00) — напоминание отметить рабочий день.\n"
         "🌙 Вечером (21:00) — итог дня.\n"
@@ -370,7 +416,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     meter = db["deductions"]["meter"]["per_week"]
     net = round(totals["production"] - truck - meter, 2)
     work_days = count_work_days(totals["week_start"], totals["week_end"], TECH_ID)
-    goal_line = _goal_progress_line()
+    goal_line = goals_progress_block()
     extra = f"\n{goal_line}" if goal_line else ""
     if work_days:
         extra += f"\nРабочих дней: {work_days}"

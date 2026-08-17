@@ -12,9 +12,9 @@ sys.path.insert(0, str(ROOT))
 
 from bot.config import TECH_ID
 from bot.jobs_manager import get_today_jobs, today_totals
+from bot.goals import goals_progress_block
 from bot.settings_store import (
     count_work_days,
-    get_weekly_goal,
     get_work_day,
     mark_task_ran,
     task_already_ran,
@@ -36,19 +36,7 @@ def _workday_keyboard() -> dict:
 
 
 def _goal_progress_block() -> str:
-    today = miami_now().date()
-    week_start, week_end = week_bounds(today)
-    week = week_totals(week_start)
-    goal = get_weekly_goal(week_start, TECH_ID)
-    if not goal:
-        return ""
-    pct = min(100, round(week["production"] / goal * 100)) if goal else 0
-    bar_filled = pct // 10
-    bar = "█" * bar_filled + "░" * (10 - bar_filled)
-    return (
-        f"\n🎯 <b>Цель недели:</b> ${week['production']:,.2f} / ${goal:,.2f} ({pct}%)\n"
-        f"{bar}"
-    )
+    return goals_progress_block()
 
 
 def run_morning_checkin(force: bool = False) -> bool:

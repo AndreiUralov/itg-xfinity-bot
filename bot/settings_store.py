@@ -219,6 +219,71 @@ def get_weekly_goal(week_start: date, tech: str) -> float | None:
     return float(value) if value is not None else None
 
 
+def _daily_goal_key(tech: str) -> str:
+    return f"daily_goal_{tech}"
+
+
+def _goal_work_days_key(tech: str) -> str:
+    return f"goal_work_days_{tech}"
+
+
+def get_goal_work_days(tech: str) -> int:
+    raw = get_setting(_goal_work_days_key(tech))
+    if raw and raw.isdigit():
+        return max(1, int(raw))
+    return 5
+
+
+def set_goal_work_days(tech: str, days: int) -> None:
+    set_setting(_goal_work_days_key(tech), str(max(1, days)))
+
+
+def set_daily_goal(tech: str, amount: float) -> None:
+    set_setting(_daily_goal_key(tech), f"{amount:.2f}")
+
+
+def clear_daily_goal(tech: str) -> None:
+    if db_enabled():
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM bot_settings WHERE key = %s", (_daily_goal_key(tech),))
+            conn.commit()
+        return
+    data = _load_json()
+    data.get("bot_settings", {}).pop(_daily_goal_key(tech), None)
+    _save_json(data)
+
+
+def get_daily_goal(tech: str) -> float | None:
+    raw = get_setting(_daily_goal_key(tech))
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def get_effective_daily_goal(week_start: date, tech: str) -> float | None:
+    daily = get_daily_goal(tech)
+    if daily is not None:
+        return daily
+    weekly = get_weekly_goal(week_start, tech)
+    if weekly is None:
+        return None
+    return round(weekly / get_goal_work_days(tech), 2)
+
+
+def set_weekly_goal_with_daily(week_start: date, tech: str, amount: float, *, work_days: int | None = None) -> float:
+    """Set weekly goal and auto-calculate daily goal. Returns daily amount."""
+    if work_days is not None:
+        set_goal_work_days(tech, work_days)
+    set_weekly_goal(week_start, tech, amount)
+    days = get_goal_work_days(tech)
+    daily = round(amount / days, 2)
+    set_daily_goal(tech, daily)
+    return daily
+
+
 def task_already_ran(task_name: str, run_date: date) -> bool:
     if db_enabled():
         with _connect() as conn, conn.cursor() as cur:

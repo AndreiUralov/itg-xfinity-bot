@@ -40,7 +40,7 @@ BOT_COMMANDS = [
     BotCommand("start", "Сводка за день и неделю"),
     BotCommand("on", "На работе сегодня"),
     BotCommand("off", "Выходной сегодня"),
-    BotCommand("goal", "Цель на неделю в $"),
+    BotCommand("goal", "Цель на день и неделю в $"),
     BotCommand("today", "Работы за сегодня — изменить / удалить"),
     BotCommand("week", "Итог текущей недели"),
     BotCommand("invoice", "PDF инвойс ATN"),
