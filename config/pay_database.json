@@ -270,7 +270,9 @@
         "H2:INT OUT",
         "VIDEO TC",
         "RPT TC",
-        "INT OUT"
+        "INT OUT",
+        "VID OUT",
+        "TV ALL OUT"
       ],
       "lines": [{ "code": "R.T.8.", "qty": 1 }],
       "user_prompt": null,

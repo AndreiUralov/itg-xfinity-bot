@@ -27,7 +27,7 @@ Return ONLY valid JSON (no markdown) with this schema:
   "address": "string or null",
   "account_number": "string or null",
   "work_type": "Trouble Call | Service Change | New Install | Special Request | Self Install | null",
-  "subtype_codes": ["array of codes like HSD OUT, TECH RECOVERY, VID UP, HSD NC, HSD RC"],
+  "subtype_codes": ["array of codes like HSD OUT, VID OUT, 01:TV ALL OUT, TECH RECOVERY, VID UP, HSD NC, HSD RC"],
   "hookup_type": "Aerial | Underground | null",
   "dwelling_type": "string or null"
 }
@@ -35,7 +35,7 @@ Return ONLY valid JSON (no markdown) with this schema:
 Rules:
 - job_number is from header "Job# ######"
 - work_type is the large heading near bottom (Trouble Call, Service Change, New Install, etc.)
-- subtype_codes are lines under work_type (HSD OUT, TECH RECOVERY, HSD NC, HSD RC, VID UP, etc.)
+- subtype_codes are lines under work_type (HSD OUT, VID OUT, 01:TV ALL OUT, TECH RECOVERY, HSD NC, HSD RC, VID UP, etc.)
 - address is the full street + city + state + zip when visible on screen
 - account_number is the long number under Account #
 - If multiple screenshots belong to same job, merge fields — prefer non-null values
