@@ -1,5 +1,5 @@
 rule_id,priority,work_type,subtype_match,match_mode,base_codes,equipment_prompt,product_prompt,confirmed,example_jobs
-trouble_call,10,Trouble Call,"HSD OUT|H2:INT OUT|VIDEO TC|RPT TC|INT OUT",any,R.T.8.,FALSE,FALSE,TRUE,509413;506037
+trouble_call,10,Trouble Call,"HSD OUT|H2:INT OUT|VIDEO TC|RPT TC|INT OUT|VID OUT|TV ALL OUT",any,R.T.8.,FALSE,FALSE,TRUE,509413;506037
 service_change_tech_recovery,20,Service Change,TECH RECOVERY,all,R.Q.2.,FALSE,FALSE,TRUE,497745;510236
 service_change_hsd_up,21,Service Change,HSD UP,any,R.A.1.,TRUE,FALSE,TRUE,
 service_change_vid_up,22,Service Change,VID UP,any,R.A.1.,TRUE,FALSE,TRUE,498945
