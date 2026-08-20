@@ -7,6 +7,7 @@ services:
     branch: main
     buildCommand: pip install -r requirements.txt
     startCommand: python scripts/init_db.py && python scripts/run_bot.py
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.0"

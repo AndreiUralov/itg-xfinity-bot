@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import sys
 from pathlib import Path
 
+import uvicorn
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse, Response
+from starlette.routing import Route
 from telegram import BotCommand, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters
 
@@ -48,6 +54,8 @@ BOT_COMMANDS = [
     BotCommand("help", "Как пользоваться ботом"),
 ]
 
+ALLOWED_UPDATES = ["message", "callback_query"]
+
 
 async def _register_commands(application: Application) -> None:
     try:
@@ -79,27 +87,28 @@ async def _maybe_run_scheduled_tasks(update: Update, context: ContextTypes.DEFAU
         pass
 
 
-async def _post_init(application: Application) -> None:
-    await _register_commands(application)
-    asyncio.create_task(_scheduler_loop())
+def _build_application(*, webhook: bool) -> Application:
+    scheduler_task: asyncio.Task | None = None
 
+    async def post_init(application: Application) -> None:
+        nonlocal scheduler_task
+        await _register_commands(application)
+        scheduler_task = asyncio.create_task(_scheduler_loop())
 
-def main() -> None:
-    if not TELEGRAM_BOT_TOKEN:
-        raise SystemExit(
-            "TELEGRAM_BOT_TOKEN не задан.\n"
-            "Создайте .env из .env.example и укажите токен от @BotFather"
-        )
+    async def post_shutdown(application: Application) -> None:
+        nonlocal scheduler_task
+        if scheduler_task and not scheduler_task.done():
+            scheduler_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await scheduler_task
 
-    app = (
-        Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .post_init(_post_init)
-        .build()
-    )
+    builder = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown)
+    if webhook:
+        builder = builder.updater(None)
+
+    app = builder.build()
 
     app.add_handler(TypeHandler(Update, _maybe_run_scheduled_tasks), group=-1)
-
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("on", cmd_on))
     app.add_handler(CommandHandler("off", cmd_off))
@@ -112,23 +121,69 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(handle_callback))
+    return app
+
+
+async def _run_webhook(app: Application) -> None:
+    port = int(os.environ.get("PORT", "10000"))
+    webhook_path = TELEGRAM_BOT_TOKEN
+    webhook_url = f"{WEBHOOK_URL.rstrip('/')}/{webhook_path}"
+
+    async def telegram_update(request: Request) -> Response:
+        await app.update_queue.put(Update.de_json(data=await request.json(), bot=app.bot))
+        return Response()
+
+    async def health(_: Request) -> PlainTextResponse:
+        return PlainTextResponse("ok")
+
+    starlette_app = Starlette(
+        routes=[
+            Route(f"/{webhook_path}", telegram_update, methods=["POST"]),
+            Route("/health", health, methods=["GET"]),
+            Route("/", health, methods=["GET"]),
+        ]
+    )
+
+    logger.info("Starting webhook server on 0.0.0.0:%s (health=/health)", port)
+    webserver = uvicorn.Server(
+        uvicorn.Config(
+            starlette_app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info",
+            use_colors=False,
+        )
+    )
+
+    async with app:
+        await app.bot.set_webhook(
+            url=webhook_url,
+            allowed_updates=ALLOWED_UPDATES,
+            drop_pending_updates=True,
+        )
+        logger.info("Telegram webhook set: %s", webhook_url)
+        await app.start()
+        await webserver.serve()
+        await app.stop()
+
+
+def main() -> None:
+    if not TELEGRAM_BOT_TOKEN:
+        raise SystemExit(
+            "TELEGRAM_BOT_TOKEN не задан.\n"
+            "Создайте .env из .env.example и укажите токен от @BotFather"
+        )
 
     use_webhook = bool(WEBHOOK_URL)
     logger.info("ITG bot started (mode=%s)", "webhook" if use_webhook else "polling")
 
     if use_webhook:
-        port = int(os.environ.get("PORT", "10000"))
-        path = TELEGRAM_BOT_TOKEN
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=path,
-            webhook_url=f"{WEBHOOK_URL.rstrip('/')}/{path}",
-            allowed_updates=["message", "callback_query"],
-            drop_pending_updates=True,
-        )
-    else:
-        app.run_polling(allowed_updates=["message", "callback_query"])
+        app = _build_application(webhook=True)
+        asyncio.run(_run_webhook(app))
+        return
+
+    app = _build_application(webhook=False)
+    app.run_polling(allowed_updates=ALLOWED_UPDATES)
 
 
 if __name__ == "__main__":
