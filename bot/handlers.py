@@ -33,6 +33,7 @@ from bot.keyboards import (  # noqa: E402
     duplicate_confirm_keyboard,
     equipment_keyboard,
     format_equipment_summary,
+    main_menu_keyboard,
     photo_actions_keyboard,
     product_keyboard,
     subtype_keyboard,
@@ -43,7 +44,15 @@ from bot.keyboards import (  # noqa: E402
     work_type_keyboard,
     workday_keyboard,
 )
-from bot.jobs_manager import delete_job, find_existing_job, get_job, get_today_jobs, job_to_session_data, today_totals  # noqa: E402
+from bot.jobs_manager import (  # noqa: E402
+    delete_job,
+    find_existing_job,
+    get_job,
+    get_today_jobs,
+    get_today_tips,
+    job_to_session_data,
+    today_totals,
+)
 from bot.job_hints import format_job_hint, lookup_job_hint  # noqa: E402
 from bot.quick_input import parse_quick_input  # noqa: E402
 from bot.goals import daily_goal_progress_line, goals_progress_block, weekly_goal_progress_line  # noqa: E402
@@ -61,13 +70,14 @@ from bot.settings_store import (  # noqa: E402
     set_weekly_goal_with_daily,
     set_work_day,
 )
-from bot.storage import save_job, week_bounds, week_totals  # noqa: E402
+from bot.storage import save_job, save_tip, week_bounds, week_totals  # noqa: E402
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
 from datetime_miami import miami_now  # noqa: E402
 from work_area import is_confident, resolve_work_area  # noqa: E402
 from calculator import calculate_job, find_matching_rule, load_database  # noqa: E402
 
 TZ = ZoneInfo("America/New_York")
+TIPS_BUTTON_TEXT = "💵 Чаевые"
 
 _media_group_buffers: dict[str, dict[str, Any]] = {}
 _photo_wait_tasks: dict[int, asyncio.Task] = {}
@@ -218,6 +228,10 @@ def _format_stats_block() -> str:
         f"{week['job_count']} {_jobs_word(week['job_count'])}, "
         f"<b>${week['production']:,.2f}</b>"
     )
+    if day.get("tips"):
+        block += f"\n💵 Чаевые сегодня: <b>${day['tips']:,.2f}</b> (не в плане)"
+    if week.get("tips"):
+        block += f"\n💵 Чаевые за неделю: <b>${week['tips']:,.2f}</b>"
     if work_days:
         block += f" · {work_days} раб. дн."
     goal_block = _goal_progress_line()
@@ -241,10 +255,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/goal 1755 — цель на неделю (дневная авто)\n"
         "/week — итог текущей недели (Вс–Сб)\n"
         "/today — работы за сегодня (изменить / удалить)\n"
+        "/tips — добавить чаевые (не в план)\n"
         "/invoice — PDF в формате ATN\n"
         "/cancel — отменить текущую работу\n"
         "/help — справка",
         parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
     )
 
 
@@ -385,6 +401,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "3. Проверь данные → подтверди\n"
         "4. Выбери оборудование (если нужно)\n"
         "5. Работа сохранится для недельного инвойса ATN\n\n"
+        "<b>Чаевые:</b> /tips или кнопка «💵 Чаевые» — отдельно от работ, не идут в план.\n\n"
         "<b>Быстрый ввод без скрина:</b>\n"
         "<code>549110 trouble</code> · <code>508836 service</code>\n\n"
         "/on — на работе · /off — выходной\n"
@@ -447,24 +464,21 @@ def _format_today_list(jobs: list[dict]) -> str:
     if not jobs:
         return f"📋 <b>Сегодня ({date_label})</b>\n\nНет сохранённых работ."
 
-    total = round(sum(j["production"] for j in jobs), 2)
-    tips_total = round(sum(j["tips"] for j in jobs), 2)
+    total = round(sum(j["total"] for j in jobs), 2)
+    tips_total = round(sum(float(r["item_total"]) for r in get_today_tips()), 2)
     count = len(jobs)
     word = "работа" if count == 1 else ("работы" if 2 <= count <= 4 else "работ")
     header = f"📋 <b>Сегодня ({date_label})</b> — {count} {word}, <b>${total:.2f}</b>"
     if tips_total:
-        header += f" · чаевые ${tips_total:.2f}"
+        header += f"\n💵 Чаевые сегодня: <b>${tips_total:.2f}</b> (не в плане)"
     lines = [header + "\n"]
     for i, job in enumerate(jobs, 1):
         addr = job.get("address") or "—"
         if len(addr) > 45:
             addr = addr[:42] + "..."
-        amount_label = f"${job['production']:.2f}"
-        if job.get("tips"):
-            amount_label += f" +${job['tips']:.0f} tip"
         lines.append(
             f"{i}. Job# <code>{job['job_number']}</code> — {job.get('work_type', '?')} — "
-            f"<b>{amount_label}</b>\n   {addr}"
+            f"<b>${job['total']:.2f}</b>\n   {addr}"
         )
     lines.append("\nНажми на работу, чтобы изменить или удалить.")
     return "\n".join(lines)
@@ -482,12 +496,41 @@ def _format_today_job(job: dict) -> str:
         "💰 <b>ATN строки:</b>",
         job.get("codes", "—"),
         "",
-        f"<b>Production: ${job['production']:.2f}</b>",
+        f"<b>Итого: ${job['total']:.2f}</b>",
     ]
-    if job.get("tips"):
-        lines.append(f"<b>Чаевые: ${job['tips']:.2f}</b>")
-    lines.append(f"<b>Итого: ${job['total']:.2f}</b>")
     return "\n".join(lines)
+
+
+def _tips_menu_text() -> str:
+    tips_today = get_today_tips()
+    total = round(sum(float(r["item_total"]) for r in tips_today), 2)
+    count = len(tips_today)
+    lines = [
+        "💵 <b>Чаевые</b>",
+        "",
+        f"Сегодня: <b>${total:.2f}</b> ({count})",
+        "<i>Не привязаны к работам и не идут в план.</i>",
+        "",
+        "Выбери сумму или введи свою:",
+    ]
+    return "\n".join(lines)
+
+
+async def _send_tips_menu(target, *, edit: bool = False) -> None:
+    text = _tips_menu_text()
+    markup = tips_keyboard()
+    if edit and hasattr(target, "edit_message_text"):
+        await target.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    else:
+        await target.reply_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update.effective_user.id):
+        return await _deny(update)
+    save_chat_id(update.effective_chat.id)
+    context.user_data["step"] = "pick_tip"
+    await _send_tips_menu(update.message)
 
 
 async def _send_today_list(target, *, edit: bool = False) -> None:
@@ -679,26 +722,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
-    if step == "await_tip":
+    if step == "await_standalone_tip":
         tip_amount = _parse_tip_amount(text)
         if tip_amount is None:
             await update.message.reply_text("⚠️ Введи сумму числом, напр. <code>10</code> или <code>12.50</code>", parse_mode="HTML")
             return
-        pending = context.user_data.get("pending_save", {})
-        rule_id = pending.get("rule_id") or context.user_data.pop("pending_rule_id", None)
-        if not rule_id:
-            rule = find_matching_rule(_get_db(), extracted.get("work_type") or "", extracted.get("subtype_codes"))
-            rule_id = rule["id"] if rule else "manual"
-        pay = _preview_pay(
-            extracted,
-            context.user_data.get("equipment"),
-            context.user_data.get("product_code"),
-            context.user_data.get("optional_addons"),
-        )
-        await _save_and_finish(update.message, context, extracted, pay, rule_id, tip_amount)
+        await _save_standalone_tip(update.message, context, tip_amount)
         return
 
     if not step:
+        if text == TIPS_BUTTON_TEXT:
+            await cmd_tips(update, context)
+            return
         quick = parse_quick_input(text)
         if quick:
             await _start_quick_input(update, context, {**empty_extraction(), **quick})
@@ -879,7 +914,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             context.user_data.get("product_code"),
             context.user_data.get("optional_addons"),
         )
-        await _prompt_tips(query, context, extracted, pay, rule_id)
+        await _save_and_finish(query, context, extracted, pay, rule_id)
         return
 
     if data == "work:on":
@@ -921,7 +956,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if data == "act:back_preview":
-        context.user_data.pop("pending_save", None)
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted, context.user_data.get("equipment"), context.user_data.get("product_code"), context.user_data.get("optional_addons"))
         await query.edit_message_text(
@@ -1032,36 +1066,31 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        await _prompt_tips(query, context, extracted, pay, rule["id"])
+        await _save_and_finish(query, context, extracted, pay, rule["id"])
         return
 
-    if data.startswith("tip:"):
-        value = data[4:]
-        if value == "custom":
-            pending = context.user_data.setdefault("pending_save", {})
-            if not pending.get("rule_id"):
-                pending["rule_id"] = context.user_data.pop("pending_rule_id", None)
-            context.user_data["step"] = "await_tip"
+    if data.startswith("tips:"):
+        action = data[5:]
+        if action == "menu":
+            context.user_data["step"] = "pick_tip"
+            await _send_tips_menu(query, edit=True)
+            return
+        if action == "cancel":
+            context.user_data.pop("step", None)
+            await query.edit_message_text("❌ Отменено.")
+            return
+        if action == "custom":
+            context.user_data["step"] = "await_standalone_tip"
             await query.edit_message_text(
-                "💵 Введи сумму чаевых ($), напр. <code>10</code> или <code>12.50</code>\n"
-                "<i>0 — без чаевых</i>",
+                "💵 Введи сумму чаевых ($), напр. <code>10</code> или <code>12.50</code>",
                 parse_mode="HTML",
             )
             return
-
-        tip_amount = float(value)
-        pending = context.user_data.get("pending_save", {})
-        rule_id = pending.get("rule_id") or context.user_data.pop("pending_rule_id", None)
-        if not rule_id:
-            rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
-            rule_id = rule["id"] if rule else "manual"
-        pay = _preview_pay(
-            extracted,
-            context.user_data.get("equipment"),
-            context.user_data.get("product_code"),
-            context.user_data.get("optional_addons"),
-        )
-        await _save_and_finish(query, context, extracted, pay, rule_id, tip_amount)
+        tip_amount = _parse_tip_amount(action)
+        if tip_amount is None:
+            await query.answer("Неверная сумма", show_alert=True)
+            return
+        await _save_standalone_tip(query, context, tip_amount)
         return
 
     if data.startswith("prod:"):
@@ -1134,7 +1163,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 reply_markup=duplicate_confirm_keyboard(),
             )
             return
-        await _prompt_tips(query, context, extracted, pay, rule_id)
+        await _save_and_finish(query, context, extracted, pay, rule_id)
         return
 
     if data.startswith("addon:"):
@@ -1173,7 +1202,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 reply_markup=duplicate_confirm_keyboard(),
             )
             return
-        await _prompt_tips(query, context, extracted, pay, rule_id)
+        await _save_and_finish(query, context, extracted, pay, rule_id)
         return
 
     if data == "today:refresh" or data == "today:back":
@@ -1255,21 +1284,9 @@ def _parse_tip_amount(text: str) -> float | None:
         amount = round(float(cleaned), 2)
     except ValueError:
         return None
-    if amount < 0 or amount > 9999:
+    if amount <= 0 or amount > 9999:
         return None
     return amount
-
-
-async def _prompt_tips(query, context, extracted: dict, pay, rule_id: str) -> None:
-    context.user_data["pending_save"] = {"rule_id": rule_id}
-    context.user_data["step"] = "pick_tip"
-    await query.edit_message_text(
-        f"💵 <b>Чаевые?</b>\n\n"
-        f"Job# <code>{extracted.get('job_number')}</code> — ATN <b>${pay.total:.2f}</b>\n"
-        f"<i>Не идут в план / production</i>",
-        parse_mode="HTML",
-        reply_markup=tips_keyboard(),
-    )
 
 
 async def _respond(target, text: str, **kwargs) -> None:
@@ -1279,7 +1296,18 @@ async def _respond(target, text: str, **kwargs) -> None:
         await target.reply_text(text, **kwargs)
 
 
-async def _save_and_finish(target, context, extracted: dict, pay, rule_id: str, tip_amount: float = 0.0) -> None:
+async def _save_standalone_tip(target, context, tip_amount: float) -> None:
+    save_tip(amount=tip_amount)
+    context.user_data.pop("step", None)
+    await _respond(
+        target,
+        f"✅ <b>Чаевые ${tip_amount:.2f}</b> добавлены\n\n{_format_stats_block()}",
+        parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+async def _save_and_finish(target, context, extracted: dict, pay, rule_id: str) -> None:
     if not extracted.get("job_number"):
         await _respond(target, "⚠️ Нет Job#. Отправь скрин с номером работы или /cancel.")
         return
@@ -1295,7 +1323,6 @@ async def _save_and_finish(target, context, extracted: dict, pay, rule_id: str, 
         extracted["address"].upper(),
         today.date(),
     )
-    tip_value = round(float(tip_amount or 0), 2)
 
     save_job(
         job_number=extracted["job_number"],
@@ -1308,24 +1335,18 @@ async def _save_and_finish(target, context, extracted: dict, pay, rule_id: str, 
         account_number=str(extracted.get("account_number") or ""),
         hookup_type=str(extracted.get("hookup_type") or ""),
         completion_datetime=today,
-        tip_amount=tip_value,
     )
 
     lines_text = "\n".join(f"  {line.code} ${line.total:.2f}" for line in pay.lines)
-    if tip_value > 0:
-        lines_text += f"\n  TIP ${tip_value:.2f}"
-    summary_lines = [f"<b>Production: ${pay.total:.2f}</b>"]
-    if tip_value > 0:
-        summary_lines.append(f"<b>Чаевые: ${tip_value:.2f}</b>")
     await _respond(
         target,
         f"✅ <b>Сохранено — Job# {extracted['job_number']}</b>\n\n"
         f"{lines_text}\n"
-        f"{chr(10).join(summary_lines)}\n\n"
+        f"<b>За работу: ${pay.total:.2f}</b>\n\n"
         f"{_format_stats_block()}",
         parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
     )
     context.user_data.pop("allow_duplicate", None)
     context.user_data.pop("pending_rule_id", None)
-    context.user_data.pop("pending_save", None)
     _reset_session(context)
