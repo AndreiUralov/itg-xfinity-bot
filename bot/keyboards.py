@@ -49,6 +49,34 @@ def duplicate_confirm_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def tips_keyboard(*, show_cancel: bool = True) -> InlineKeyboardMarkup:
+    amounts = [5, 10, 15, 20, 25, 30, 50]
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for amount in amounts:
+        row.append(InlineKeyboardButton(f"${amount}", callback_data=f"tips:{amount}"))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("✏️ Другая сумма", callback_data="tips:custom")])
+    if show_cancel:
+        rows.append([InlineKeyboardButton("❌ Отмена", callback_data="tips:cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
+def main_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("💵 Чаевые", callback_data="tips:menu"),
+                InlineKeyboardButton("📋 Сегодня", callback_data="today:refresh"),
+            ],
+        ]
+    )
+
+
 def confirm_keyboard(work_area: str = "Broward") -> InlineKeyboardMarkup:
     broward_mark = "✓ " if work_area == "Broward" else ""
     miami_mark = "✓ " if work_area == "Miami" else ""

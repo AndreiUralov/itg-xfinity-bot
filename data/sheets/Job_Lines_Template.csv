@@ -1,1 +1,1 @@
-recorded_at,week_start,week_end,tech,job_number,work_area,completion_date,address,account_number,work_type,subtype_codes,hookup_type,rule_id,job_code,qty,item_total,confirmed,notes
+recorded_at,week_start,week_end,tech,job_number,work_area,completion_date,address,account_number,work_type,subtype_codes,hookup_type,rule_id,job_code,qty,item_total,line_type,confirmed,notes

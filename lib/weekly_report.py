@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from bot.line_types import LINE_TYPE_PRODUCTION
 from invoice_generator import (
     InvoiceLine,
     build_weekly_invoice,
@@ -105,6 +106,7 @@ def _dict_to_line(data: dict[str, Any]) -> InvoiceLine:
         job_code=data["job_code"],
         qty=int(data.get("qty", 1)),
         item_total=float(data["item_total"]),
+        line_type=(data.get("line_type") or LINE_TYPE_PRODUCTION),
     )
 
 
@@ -165,6 +167,7 @@ def generate_weekly_report(
                 "week_end": week_end.isoformat(),
                 "payment_date": invoice.payment_date.isoformat(),
                 "production": invoice.production,
+                "tips": invoice.tips,
                 "truck": invoice.truck,
                 "meter": invoice.meter,
                 "deposit": invoice.deposit,

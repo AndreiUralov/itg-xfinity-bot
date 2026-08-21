@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from bot.line_types import is_production_line
 from bot.storage import read_all_rows
 
 
@@ -20,6 +21,8 @@ def lookup_job_hint(job_number: str | int) -> dict[str, Any] | None:
 
     totals_by_save: dict[str, float] = {}
     for row in rows:
+        if not is_production_line(row):
+            continue
         key = row.get("recorded_at", "")[:19]
         totals_by_save[key] = totals_by_save.get(key, 0.0) + float(row["item_total"])
 

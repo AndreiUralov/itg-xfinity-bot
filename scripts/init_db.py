@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS job_lines (
 );
 CREATE INDEX IF NOT EXISTS idx_job_lines_week_start ON job_lines(week_start);
 CREATE INDEX IF NOT EXISTS idx_job_lines_job_number ON job_lines(job_number);
+ALTER TABLE job_lines ADD COLUMN IF NOT EXISTS line_type TEXT NOT NULL DEFAULT 'production';
 """
 
 

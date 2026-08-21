@@ -29,6 +29,7 @@ from bot.handlers import (
     cmd_off,
     cmd_on,
     cmd_start,
+    cmd_tips,
     cmd_today,
     cmd_week,
     handle_callback,
@@ -48,6 +49,7 @@ BOT_COMMANDS = [
     BotCommand("off", "Выходной сегодня"),
     BotCommand("goal", "Цель на день и неделю в $"),
     BotCommand("today", "Работы за сегодня — изменить / удалить"),
+    BotCommand("tips", "Добавить чаевые (не в план)"),
     BotCommand("week", "Итог текущей недели"),
     BotCommand("invoice", "PDF инвойс ATN"),
     BotCommand("cancel", "Отменить текущую работу"),
@@ -117,6 +119,7 @@ def _build_application(*, webhook: bool) -> Application:
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CommandHandler("tips", cmd_tips))
     app.add_handler(CommandHandler("invoice", cmd_invoice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import sys
 from datetime import date
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 
+from bot.line_types import is_production_line, is_tip_line, sum_tips
 from bot.storage import read_all_rows, write_all_rows
 from datetime_miami import miami_now
 
@@ -24,7 +24,7 @@ def _write_all_rows(rows: list[dict[str, str]]) -> None:
 
 
 def _row_day(row: dict[str, str]) -> date:
-    """Date the job belongs to (completion date preferred)."""
+    """Date the row belongs to (completion date preferred)."""
     completion = row.get("completion_date", "")
     if completion:
         return date.fromisoformat(completion[:10])
@@ -42,11 +42,16 @@ def _group_rows(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
     return grouped
 
 
+def get_today_tips(day: date | None = None) -> list[dict[str, str]]:
+    target = day or miami_now().date()
+    return [r for r in _read_all_rows() if _row_day(r) == target and is_tip_line(r)]
+
+
 def get_today_jobs(day: date | None = None) -> list[dict[str, Any]]:
-    """Return today's jobs grouped by job_number with totals."""
+    """Return today's jobs grouped by job_number with totals (production lines only)."""
     target = day or miami_now().date()
     all_rows = _read_all_rows()
-    today_rows = [r for r in all_rows if _row_day(r) == target]
+    today_rows = [r for r in all_rows if _row_day(r) == target and is_production_line(r)]
     grouped = _group_rows(today_rows)
 
     jobs: list[dict[str, Any]] = []
@@ -78,9 +83,11 @@ def get_today_jobs(day: date | None = None) -> list[dict[str, Any]]:
 
 def today_totals(day: date | None = None) -> dict[str, Any]:
     jobs = get_today_jobs(day)
+    tips = sum_tips(get_today_tips(day))
     return {
         "job_count": len(jobs),
         "production": round(sum(j["total"] for j in jobs), 2),
+        "tips": tips,
     }
 
 
@@ -108,7 +115,9 @@ def find_existing_job(job_number: str | int) -> dict[str, Any] | None:
     matching_rows = [
         r
         for r in _read_all_rows()
-        if str(r["job_number"]) == str(job_number) and week_start <= _row_day(r) <= week_end
+        if str(r["job_number"]) == str(job_number)
+        and is_production_line(r)
+        and week_start <= _row_day(r) <= week_end
     ]
     if not matching_rows:
         return None
