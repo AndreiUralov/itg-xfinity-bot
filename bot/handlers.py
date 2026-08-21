@@ -722,7 +722,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
-    if step == "await_standalone_tip":
+    if step == "await_standalone_tip" or step == "pick_tip":
         tip_amount = _parse_tip_amount(text)
         if tip_amount is None:
             await update.message.reply_text("⚠️ Введи сумму числом, напр. <code>10</code> или <code>12.50</code>", parse_mode="HTML")
@@ -734,6 +734,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if text == TIPS_BUTTON_TEXT:
             await cmd_tips(update, context)
             return
+        if _should_accept_standalone_tip_text(text):
+            tip_amount = _parse_tip_amount(text)
+            if tip_amount is not None:
+                await _save_standalone_tip(update.message, context, tip_amount)
+                return
         quick = parse_quick_input(text)
         if quick:
             await _start_quick_input(update, context, {**empty_extraction(), **quick})
@@ -1081,7 +1086,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         if action == "custom":
             context.user_data["step"] = "await_standalone_tip"
-            await query.edit_message_text(
+            await query.answer()
+            await query.message.reply_text(
                 "💵 Введи сумму чаевых ($), напр. <code>10</code> или <code>12.50</code>",
                 parse_mode="HTML",
             )
@@ -1289,6 +1295,17 @@ def _parse_tip_amount(text: str) -> float | None:
     return amount
 
 
+def _should_accept_standalone_tip_text(text: str) -> bool:
+    """Accept plain tip amounts even if session step was lost (/start, bot restart)."""
+    cleaned = text.strip().replace("$", "").replace(",", ".")
+    if not cleaned or not re.fullmatch(r"\d+(?:\.\d{1,2})?", cleaned):
+        return False
+    # Leave 5–7 digit numbers for quick job entry (549110 trouble).
+    if re.fullmatch(r"\d{5,7}", cleaned):
+        return False
+    return _parse_tip_amount(text) is not None
+
+
 async def _respond(target, text: str, **kwargs) -> None:
     if hasattr(target, "edit_message_text"):
         await target.edit_message_text(text, **kwargs)
@@ -1297,7 +1314,11 @@ async def _respond(target, text: str, **kwargs) -> None:
 
 
 async def _save_standalone_tip(target, context, tip_amount: float) -> None:
-    save_tip(amount=tip_amount)
+    try:
+        save_tip(amount=tip_amount)
+    except Exception as exc:
+        await _respond(target, f"⚠️ Не удалось сохранить чаевые: {exc}")
+        return
     context.user_data.pop("step", None)
     await _respond(
         target,
