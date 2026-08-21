@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 
 from bot.config import JOB_LINES_CSV, TECH_ID
+from bot.line_types import LINE_TYPE_PRODUCTION, LINE_TYPE_TIP, TIP_JOB_CODE, TIP_RULE_ID, sum_production, sum_tips
 from datetime_miami import format_atn_datetime, miami_now
 
 CSV_COLUMNS = [
@@ -32,6 +33,7 @@ CSV_COLUMNS = [
     "job_code",
     "qty",
     "item_total",
+    "line_type",
     "confirmed",
     "notes",
 ]
@@ -44,7 +46,10 @@ def _read_all_rows() -> list[dict[str, str]]:
         return db_read()
     _ensure_csv()
     with JOB_LINES_CSV.open(encoding="utf-8", newline="") as f:
-        return list(csv.DictReader(f))
+        rows = list(csv.DictReader(f))
+    for row in rows:
+        row.setdefault("line_type", LINE_TYPE_PRODUCTION)
+    return rows
 
 
 def _write_all_rows(rows: list[dict[str, str]]) -> None:
@@ -93,6 +98,7 @@ def save_job(
     hookup_type: str = "",
     completion_datetime: datetime | None = None,
     notes: str = "",
+    tip_amount: float = 0.0,
 ) -> Path:
     _ensure_csv()
     now = miami_now()
@@ -121,6 +127,33 @@ def save_job(
                 "job_code": row["job_code"],
                 "qty": row.get("qty", 1),
                 "item_total": row["item_total"],
+                "line_type": LINE_TYPE_PRODUCTION,
+                "confirmed": "TRUE",
+                "notes": notes,
+            }
+        )
+
+    tip_value = round(float(tip_amount or 0), 2)
+    if tip_value > 0:
+        rows_to_write.append(
+            {
+                "recorded_at": now.isoformat(),
+                "week_start": week_start.isoformat(),
+                "week_end": week_end.isoformat(),
+                "tech": TECH_ID,
+                "job_number": job_number,
+                "work_area": work_area,
+                "completion_date": completion_str,
+                "address": address,
+                "account_number": account_number,
+                "work_type": work_type,
+                "subtype_codes": subtype_str,
+                "hookup_type": hookup_type,
+                "rule_id": TIP_RULE_ID,
+                "job_code": TIP_JOB_CODE,
+                "qty": 1,
+                "item_total": tip_value,
+                "line_type": LINE_TYPE_TIP,
                 "confirmed": "TRUE",
                 "notes": notes,
             }
@@ -192,12 +225,14 @@ def week_totals(week_start: date | None = None) -> dict[str, Any]:
         week_end = week_start + timedelta(days=6)
 
     lines = load_week_lines(week_start, week_end)
-    production = round(sum(float(r["item_total"]) for r in lines), 2)
+    production = sum_production(lines)
+    tips = sum_tips(lines)
     jobs = len({r["job_number"] for r in lines})
     return {
         "week_start": week_start,
         "week_end": week_end,
         "production": production,
+        "tips": tips,
         "line_count": len(lines),
         "job_count": jobs,
     }

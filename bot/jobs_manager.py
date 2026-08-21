@@ -11,6 +11,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 
+from bot.line_types import is_production_line, is_tip_line, sum_production, sum_tips
 from bot.storage import read_all_rows, write_all_rows
 from datetime_miami import miami_now
 
@@ -42,6 +43,16 @@ def _group_rows(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
     return grouped
 
 
+def _format_job_codes(lines: list[dict[str, str]]) -> str:
+    parts = []
+    for row in lines:
+        if is_tip_line(row):
+            parts.append(f"TIP ${float(row['item_total']):.2f}")
+        else:
+            parts.append(f"{row['job_code']} ${float(row['item_total']):.2f}")
+    return ", ".join(parts)
+
+
 def get_today_jobs(day: date | None = None) -> list[dict[str, Any]]:
     """Return today's jobs grouped by job_number with totals."""
     target = day or miami_now().date()
@@ -51,9 +62,9 @@ def get_today_jobs(day: date | None = None) -> list[dict[str, Any]]:
 
     jobs: list[dict[str, Any]] = []
     for job_number, lines in grouped.items():
-        total = round(sum(float(r["item_total"]) for r in lines), 2)
-        first = lines[0]
-        codes = ", ".join(f"{r['job_code']} ${float(r['item_total']):.2f}" for r in lines)
+        production = sum_production(lines)
+        tips = sum_tips(lines)
+        first = next((r for r in lines if is_production_line(r)), lines[0])
         jobs.append(
             {
                 "job_number": job_number,
@@ -65,8 +76,10 @@ def get_today_jobs(day: date | None = None) -> list[dict[str, Any]]:
                 "subtype_codes": first.get("subtype_codes", ""),
                 "rule_id": first.get("rule_id", ""),
                 "completion_date": first.get("completion_date", ""),
-                "total": total,
-                "codes": codes,
+                "production": production,
+                "tips": tips,
+                "total": round(production + tips, 2),
+                "codes": _format_job_codes(lines),
                 "line_count": len(lines),
                 "rows": lines,
             }
@@ -80,7 +93,8 @@ def today_totals(day: date | None = None) -> dict[str, Any]:
     jobs = get_today_jobs(day)
     return {
         "job_count": len(jobs),
-        "production": round(sum(j["total"] for j in jobs), 2),
+        "production": round(sum(j["production"] for j in jobs), 2),
+        "tips": round(sum(j["tips"] for j in jobs), 2),
     }
 
 
@@ -115,10 +129,10 @@ def find_existing_job(job_number: str | int) -> dict[str, Any] | None:
 
     grouped = _group_rows(matching_rows)
     lines = grouped[str(job_number)]
-    total = round(sum(float(r["item_total"]) for r in lines), 2)
-    first = lines[0]
+    production = sum_production(lines)
+    tips = sum_tips(lines)
+    first = next((r for r in lines if is_production_line(r)), lines[0])
     row_day = _row_day(first)
-    codes = ", ".join(f"{r['job_code']} ${float(r['item_total']):.2f}" for r in lines)
     return {
         "job_number": str(job_number),
         "work_type": first.get("work_type", ""),
@@ -129,8 +143,10 @@ def find_existing_job(job_number: str | int) -> dict[str, Any] | None:
         "subtype_codes": first.get("subtype_codes", ""),
         "rule_id": first.get("rule_id", ""),
         "completion_date": first.get("completion_date", ""),
-        "total": total,
-        "codes": codes,
+        "production": production,
+        "tips": tips,
+        "total": round(production + tips, 2),
+        "codes": _format_job_codes(lines),
         "line_count": len(lines),
         "rows": lines,
         "scope": "week",
@@ -172,5 +188,6 @@ def job_to_session_data(job: dict[str, Any]) -> dict[str, Any]:
         "hookup_type": job.get("hookup_type", ""),
         "rule_id": job.get("rule_id", ""),
         "completion_date": job.get("completion_date", ""),
+        "tips": job.get("tips", 0.0),
         "from_edit": True,
     }

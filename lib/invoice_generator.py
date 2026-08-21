@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from bot.line_types import LINE_TYPE_PRODUCTION, LINE_TYPE_TIP
 from datetime_miami import format_atn_datetime, miami_now, parse_completion_datetime
 
 from reportlab.lib import colors
@@ -37,6 +38,7 @@ class InvoiceLine:
     job_code: str
     qty: int
     item_total: float
+    line_type: str = LINE_TYPE_PRODUCTION
 
 
 @dataclass
@@ -46,6 +48,7 @@ class WeeklyInvoice:
     payment_date: date
     lines: list[InvoiceLine]
     production: float
+    tips: float
     truck: float
     meter: float
     deposit: float | None
@@ -135,11 +138,12 @@ def build_weekly_invoice(
 ) -> WeeklyInvoice:
     db = db or load_json(DB_PATH)
     sorted_lines = sort_lines(lines)
-    production = round(sum(line.item_total for line in sorted_lines), 2)
+    production = round(sum(line.item_total for line in sorted_lines if line.line_type != LINE_TYPE_TIP), 2)
+    tips = round(sum(line.item_total for line in sorted_lines if line.line_type == LINE_TYPE_TIP), 2)
     truck = db["deductions"]["truck"]["full_week"] if full_week else db["deductions"]["truck"]["partial_week_example"]
     meter = db["deductions"]["meter"]["per_week"]
     deposit_val = deposit or 0.0
-    net = round(production - truck - meter - deposit_val, 2)
+    net = round(production - truck - meter - deposit_val + tips, 2)
     lag = db["meta"].get("payment_lag_days", 13)
 
     return WeeklyInvoice(
@@ -148,6 +152,7 @@ def build_weekly_invoice(
         payment_date=payment_date_for_week(week_end, lag),
         lines=sorted_lines,
         production=production,
+        tips=tips,
         truck=truck,
         meter=meter,
         deposit=deposit if deposit else None,

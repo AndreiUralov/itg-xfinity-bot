@@ -49,6 +49,23 @@ def duplicate_confirm_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def tips_keyboard() -> InlineKeyboardMarkup:
+    amounts = [0, 5, 10, 15, 20, 25, 30]
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for amount in amounts:
+        label = "Нет" if amount == 0 else f"${amount}"
+        row.append(InlineKeyboardButton(label, callback_data=f"tip:{amount}"))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("✏️ Другая сумма", callback_data="tip:custom")])
+    rows.append([InlineKeyboardButton("« Назад", callback_data="act:back_preview")])
+    return InlineKeyboardMarkup(rows)
+
+
 def confirm_keyboard(work_area: str = "Broward") -> InlineKeyboardMarkup:
     broward_mark = "✓ " if work_area == "Broward" else ""
     miami_mark = "✓ " if work_area == "Miami" else ""
@@ -173,7 +190,9 @@ NEW_INSTALL_SUBTYPES = ["HSD NC", "HSD RC", "Другое"]
 def today_list_keyboard(jobs: list[dict]) -> InlineKeyboardMarkup:
     rows = []
     for job in jobs:
-        label = f"#{job['job_number']} — ${job['total']:.2f}"
+        label = f"#{job['job_number']} — ${job['production']:.2f}"
+        if job.get("tips"):
+            label += f" +${job['tips']:.0f} tip"
         rows.append([InlineKeyboardButton(label, callback_data=f"today:view:{job['job_number']}")])
     rows.append([InlineKeyboardButton("🔄 Обновить", callback_data="today:refresh")])
     return InlineKeyboardMarkup(rows)
