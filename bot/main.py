@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 from bot.config import TELEGRAM_BOT_TOKEN, WEBHOOK_URL
 from bot.handlers import (
     cmd_cancel,
+    cmd_fuel,
     cmd_goal,
     cmd_help,
     cmd_invoice,
@@ -50,6 +51,7 @@ BOT_COMMANDS = [
     BotCommand("goal", "Цель на день и неделю в $"),
     BotCommand("today", "Работы за сегодня — изменить / удалить"),
     BotCommand("tips", "Добавить чаевые (не в план)"),
+    BotCommand("fuel", "Затраты на бензин"),
     BotCommand("week", "Итог текущей недели"),
     BotCommand("invoice", "PDF инвойс ATN"),
     BotCommand("cancel", "Отменить текущую работу"),
@@ -120,6 +122,7 @@ def _build_application(*, webhook: bool) -> Application:
     app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("tips", cmd_tips))
+    app.add_handler(CommandHandler("fuel", cmd_fuel))
     app.add_handler(CommandHandler("invoice", cmd_invoice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from bot.line_types import LINE_TYPE_PRODUCTION
+from bot.line_types import LINE_TYPE_PRODUCTION, is_fuel_line, sum_fuel
 from invoice_generator import (
     InvoiceLine,
     build_weekly_invoice,
@@ -53,6 +53,8 @@ def load_lines_from_csv(path: Path) -> list[InvoiceLine]:
         for row in reader:
             if not row.get("job_number"):
                 continue
+            if is_fuel_line(row):
+                continue
             lines.append(_dict_to_line(row))
     return lines
 
@@ -74,7 +76,7 @@ def load_all_job_lines(directory: Path = JOB_LINES_DIR) -> list[InvoiceLine]:
 
         rows = read_all_rows()
         if rows:
-            return [_dict_to_line(row) for row in rows]
+            return [_dict_to_line(row) for row in rows if not is_fuel_line(row)]
     except Exception:
         pass
 
@@ -143,6 +145,14 @@ def generate_weekly_report(
         all_lines = load_all_job_lines()
         lines = filter_lines_for_week(all_lines, week_start, week_end)
 
+    fuel_total = 0.0
+    try:
+        from bot.storage import load_week_lines
+
+        fuel_total = sum_fuel(load_week_lines(week_start, week_end))
+    except Exception:
+        pass
+
     invoice = build_weekly_invoice(
         lines,
         week_start=week_start,
@@ -168,6 +178,7 @@ def generate_weekly_report(
                 "payment_date": invoice.payment_date.isoformat(),
                 "production": invoice.production,
                 "tips": invoice.tips,
+                "fuel": fuel_total,
                 "truck": invoice.truck,
                 "meter": invoice.meter,
                 "deposit": invoice.deposit,
