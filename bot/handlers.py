@@ -205,14 +205,32 @@ def _jobs_word(n: int) -> str:
     return "работ"
 
 
+def _short_month(day: date) -> str:
+    months = (
+        "янв", "фев", "мар", "апр", "май", "июн",
+        "июл", "авг", "сен", "окт", "ноя", "дек",
+    )
+    return months[day.month - 1]
+
+
+def _format_week_range(week_start: date, week_end: date) -> str:
+    if week_start.month == week_end.month:
+        return f"{week_start.day}–{week_end.day} {_short_month(week_start)}"
+    return (
+        f"{week_start.day} {_short_month(week_start)} – "
+        f"{week_end.day} {_short_month(week_end)}"
+    )
+
+
 def _workday_status_line() -> str:
     today = miami_now().date()
     status = get_work_day(today, TECH_ID)
+    date_label = today.strftime("%d.%m")
     if status == "working":
-        return "🟢 Сегодня: <b>на работе</b>"
+        return f"🟢 <b>На работе</b>  ·  {date_label}"
     if status == "off":
-        return "🏖 Сегодня: <b>выходной</b>"
-    return "⚪ Сегодня: статус не отмечен (/on или /off)"
+        return f"🏖 <b>Выходной</b>  ·  {date_label}"
+    return f"⚪ Статус не отмечен  ·  {date_label}"
 
 
 def _goal_progress_line() -> str:
@@ -222,27 +240,42 @@ def _goal_progress_line() -> str:
 def _format_stats_block() -> str:
     day = today_totals()
     week = week_totals()
-    work_days = count_work_days(week["week_start"], miami_now().date(), TECH_ID)
-    block = (
-        f"{_workday_status_line()}\n"
-        f"📈 <b>Сегодня:</b> {day['job_count']} {_jobs_word(day['job_count'])}, "
-        f"<b>${day['production']:,.2f}</b>\n"
-        f"📊 <b>Неделя</b> ({week['week_start']}–{week['week_end']}): "
-        f"{week['job_count']} {_jobs_word(week['job_count'])}, "
+    today = miami_now().date()
+    work_days = count_work_days(week["week_start"], today, TECH_ID)
+    week_range = _format_week_range(week["week_start"], week["week_end"])
+
+    lines = [_workday_status_line(), ""]
+
+    lines.append(
+        f"📈 <b>Сегодня</b>  ·  {day['job_count']} {_jobs_word(day['job_count'])}  ·  "
+        f"<b>${day['production']:,.2f}</b>"
+    )
+    today_extras: list[str] = []
+    if day.get("tips"):
+        today_extras.append(f"💵 ${day['tips']:,.2f}")
+    if day.get("fuel"):
+        today_extras.append(f"⛽ ${day['fuel']:,.2f}")
+    if today_extras:
+        lines.append("   " + "  ·  ".join(today_extras))
+
+    lines.append("")
+    week_header = f"📊 <b>Неделя</b>  ·  <i>{week_range}</i>"
+    if work_days:
+        week_header += f"  ·  {work_days} раб. дн."
+    lines.append(week_header)
+    lines.append(
+        f"   {week['job_count']} {_jobs_word(week['job_count'])}  ·  "
         f"<b>${week['production']:,.2f}</b>"
     )
-    if day.get("tips"):
-        block += f"\n💵 Чаевые сегодня: <b>${day['tips']:,.2f}</b> (не в плане)"
-    if day.get("fuel"):
-        block += f"\n⛽ Бензин сегодня: <b>${day['fuel']:,.2f}</b>"
-    block += f"\n💵 Чаевые за неделю: <b>${week.get('tips', 0):,.2f}</b>"
-    block += f"\n⛽ Бензин за неделю: <b>${week.get('fuel', 0):,.2f}</b>"
-    if work_days:
-        block += f" · {work_days} раб. дн."
+    lines.append(
+        f"   💵 ${week.get('tips', 0):,.2f}  ·  ⛽ ${week.get('fuel', 0):,.2f}"
+    )
+
     goal_block = _goal_progress_line()
     if goal_block:
-        block += f"\n{goal_block}"
-    return block
+        lines.append("")
+        lines.append(goal_block)
+    return "\n".join(lines)
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -252,19 +285,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _reset_session(context)
     await update.message.reply_text(
         "👋 <b>ITG Job Tracker</b>\n\n"
-        f"{_format_stats_block()}\n\n"
-        "Отправь скриншот(ы) из Tech360 — 1 или 2 фото одним сообщением.\n"
-        "Или быстрый ввод: <code>549110 trouble</code>\n\n"
-        "<b>Команды:</b>\n"
-        "/on — на работе сегодня · /off — выходной\n"
-        "/goal 1755 — цель на неделю (дневная авто)\n"
-        "/week — итог текущей недели (Вс–Сб)\n"
-        "/today — работы за сегодня (изменить / удалить)\n"
-        "/tips — добавить чаевые (не в план)\n"
-        "/fuel — затраты на бензин\n"
-        "/invoice — PDF в формате ATN\n"
-        "/cancel — отменить текущую работу\n"
-        "/help — справка",
+        f"{_format_stats_block()}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
