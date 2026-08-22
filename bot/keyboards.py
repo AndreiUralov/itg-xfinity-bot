@@ -66,13 +66,31 @@ def tips_keyboard(*, show_cancel: bool = True) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def fuel_keyboard(*, show_cancel: bool = True) -> InlineKeyboardMarkup:
+    amounts = [20, 30, 40, 50, 60, 70, 80, 100]
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for amount in amounts:
+        row.append(InlineKeyboardButton(f"${amount}", callback_data=f"fuel:{amount}"))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("✏️ Другая сумма", callback_data="fuel:custom")])
+    if show_cancel:
+        rows.append([InlineKeyboardButton("❌ Отмена", callback_data="fuel:cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton("💵 Чаевые", callback_data="tips:menu"),
-                InlineKeyboardButton("📋 Сегодня", callback_data="today:refresh"),
+                InlineKeyboardButton("⛽ Бензин", callback_data="fuel:menu"),
             ],
+            [InlineKeyboardButton("📋 Сегодня", callback_data="today:refresh")],
         ]
     )
 

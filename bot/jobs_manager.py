@@ -10,7 +10,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 
-from bot.line_types import is_production_line, is_tip_line, sum_tips
+from bot.line_types import is_fuel_line, is_production_line, is_tip_line, sum_fuel, sum_tips
 from bot.storage import read_all_rows, write_all_rows
 from datetime_miami import miami_now
 
@@ -45,6 +45,11 @@ def _group_rows(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
 def get_today_tips(day: date | None = None) -> list[dict[str, str]]:
     target = day or miami_now().date()
     return [r for r in _read_all_rows() if _row_day(r) == target and is_tip_line(r)]
+
+
+def get_today_fuel(day: date | None = None) -> list[dict[str, str]]:
+    target = day or miami_now().date()
+    return [r for r in _read_all_rows() if _row_day(r) == target and is_fuel_line(r)]
 
 
 def get_today_jobs(day: date | None = None) -> list[dict[str, Any]]:
@@ -84,10 +89,12 @@ def get_today_jobs(day: date | None = None) -> list[dict[str, Any]]:
 def today_totals(day: date | None = None) -> dict[str, Any]:
     jobs = get_today_jobs(day)
     tips = sum_tips(get_today_tips(day))
+    fuel = sum_fuel(get_today_fuel(day))
     return {
         "job_count": len(jobs),
         "production": round(sum(j["total"] for j in jobs), 2),
         "tips": tips,
+        "fuel": fuel,
     }
 
 

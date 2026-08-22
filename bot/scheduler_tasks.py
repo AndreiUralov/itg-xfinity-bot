@@ -86,6 +86,10 @@ def run_evening_summary(force: bool = False) -> bool:
     else:
         lines.append(f"Работ: <b>{day['job_count']}</b>")
         lines.append(f"Production: <b>${day['production']:,.2f}</b>")
+        if day.get("tips"):
+            lines.append(f"Чаевые: <b>${day['tips']:,.2f}</b>")
+        if day.get("fuel"):
+            lines.append(f"Бензин: <b>${day['fuel']:,.2f}</b>")
         for job in jobs[:5]:
             lines.append(
                 f"  • Job# <code>{job['job_number']}</code> — {job.get('work_type', '?')} — ${job['total']:.2f}"
@@ -97,6 +101,8 @@ def run_evening_summary(force: bool = False) -> bool:
     week = week_totals(week_start)
     work_days = count_work_days(week_start, today, TECH_ID)
     lines.append(f"\n📊 Неделя: {week['job_count']} работ, ${week['production']:,.2f}")
+    lines.append(f"Чаевые за неделю: ${week.get('tips', 0):,.2f}")
+    lines.append(f"Бензин за неделю: ${week.get('fuel', 0):,.2f}")
     if work_days:
         lines.append(f"Рабочих дней отмечено: {work_days}")
     lines.append(_goal_progress_block())

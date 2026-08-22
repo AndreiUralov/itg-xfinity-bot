@@ -12,8 +12,20 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 
-from bot.config import JOB_LINES_CSV, TECH_ID
-from bot.line_types import LINE_TYPE_PRODUCTION, LINE_TYPE_TIP, TIP_JOB_CODE, TIP_RULE_ID, is_production_line, sum_production, sum_tips
+from bot.config import DEFAULT_WORK_AREA, JOB_LINES_CSV, TECH_ID
+from bot.line_types import (
+    FUEL_JOB_CODE,
+    FUEL_RULE_ID,
+    LINE_TYPE_FUEL,
+    LINE_TYPE_PRODUCTION,
+    LINE_TYPE_TIP,
+    TIP_JOB_CODE,
+    TIP_RULE_ID,
+    is_production_line,
+    sum_fuel,
+    sum_production,
+    sum_tips,
+)
 from datetime_miami import format_atn_datetime, miami_now
 
 CSV_COLUMNS = [
@@ -228,6 +240,67 @@ def save_tip(
     return backup_path
 
 
+def save_fuel(
+    *,
+    amount: float,
+    work_area: str | None = None,
+    completion_datetime: datetime | None = None,
+    notes: str = "",
+) -> Path:
+    """Save a standalone fuel expense (not linked to any job)."""
+    fuel_value = round(float(amount), 2)
+    if fuel_value <= 0:
+        raise ValueError("Fuel amount must be greater than zero")
+
+    now = miami_now()
+    completed = completion_datetime or now
+    completion_str = format_atn_datetime(completed)
+    week_start, week_end = week_bounds(completed.date())
+    area = work_area or DEFAULT_WORK_AREA
+    fuel_ref = f"F{now.strftime('%H%M%S%f')[:9]}"
+
+    row = {
+        "recorded_at": now.isoformat(),
+        "week_start": week_start.isoformat(),
+        "week_end": week_end.isoformat(),
+        "tech": TECH_ID,
+        "job_number": fuel_ref,
+        "work_area": area,
+        "completion_date": completion_str,
+        "address": "FUEL",
+        "account_number": "",
+        "work_type": "Fuel",
+        "subtype_codes": "",
+        "hookup_type": "",
+        "rule_id": FUEL_RULE_ID,
+        "job_code": FUEL_JOB_CODE,
+        "qty": 1,
+        "item_total": fuel_value,
+        "line_type": LINE_TYPE_FUEL,
+        "confirmed": "TRUE",
+        "notes": notes,
+    }
+
+    if _use_db():
+        from bot.db_store import append_rows
+
+        append_rows([row])
+    else:
+        _ensure_csv()
+        with JOB_LINES_CSV.open("a", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            writer.writerow(row)
+
+    backup_dir = ROOT / "data" / "job_lines" / "archive"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{now.strftime('%Y%m%d_%H%M%S')}_fuel_{fuel_ref}.json"
+    backup_path.write_text(
+        json.dumps({"saved_at": now.isoformat(), "fuel_ref": fuel_ref, "rows": [row]}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return backup_path
+
+
 def load_week_lines(week_start: date, week_end: date) -> list[dict[str, str]]:
     if _use_db():
         from bot.db_store import load_week_lines as db_load_week
@@ -261,12 +334,14 @@ def week_totals(week_start: date | None = None) -> dict[str, Any]:
     lines = load_week_lines(week_start, week_end)
     production = sum_production(lines)
     tips = sum_tips(lines)
+    fuel = sum_fuel(lines)
     jobs = len({r["job_number"] for r in lines if is_production_line(r)})
     return {
         "week_start": week_start,
         "week_end": week_end,
         "production": production,
         "tips": tips,
+        "fuel": fuel,
         "line_count": len(lines),
         "job_count": jobs,
     }
