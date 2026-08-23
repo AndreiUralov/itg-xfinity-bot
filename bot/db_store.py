@@ -63,6 +63,7 @@ def migrate_orphan_job_lines(owner_telegram_id: int) -> int:
     return updated
 
 
+def read_all_rows(owner_telegram_id: int | None = None) -> list[dict[str, str]]:
     with _connect() as conn, conn.cursor() as cur:
         if owner_telegram_id is not None:
             cur.execute(
