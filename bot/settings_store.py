@@ -314,3 +314,69 @@ def mark_task_ran(task_name: str, run_date: date, *, tech_id: str | None = None)
     data = _load_json()
     data.setdefault("scheduler_runs", {})[f"{key}:{run_date.isoformat()}"] = True
     _save_json(data)
+
+
+def migrate_legacy_settings_keys(old_key: str, new_key: str) -> None:
+    """Copy goals/work-day records from legacy TECH_ID key to telegram user id key."""
+    if not old_key or not new_key or old_key == new_key:
+        return
+    if db_enabled():
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO work_days (work_date, tech, status, checked_at)
+                SELECT work_date, %s, status, checked_at
+                FROM work_days
+                WHERE tech = %s
+                ON CONFLICT (work_date, tech) DO NOTHING
+                """,
+                (new_key, old_key),
+            )
+            cur.execute(
+                """
+                INSERT INTO weekly_goals (week_start, tech, goal_amount, set_at)
+                SELECT week_start, %s, goal_amount, set_at
+                FROM weekly_goals
+                WHERE tech = %s
+                ON CONFLICT (week_start, tech) DO NOTHING
+                """,
+                (new_key, old_key),
+            )
+            for old_setting, new_setting in (
+                (_daily_goal_key(old_key), _daily_goal_key(new_key)),
+                (_goal_work_days_key(old_key), _goal_work_days_key(new_key)),
+            ):
+                cur.execute(
+                    """
+                    INSERT INTO bot_settings (key, value, updated_at)
+                    SELECT %s, value, updated_at FROM bot_settings WHERE key = %s
+                    ON CONFLICT (key) DO NOTHING
+                    """,
+                    (new_setting, old_setting),
+                )
+            conn.commit()
+        return
+
+    data = _load_json()
+    work_days = data.setdefault("work_days", {})
+    for key, status in list(work_days.items()):
+        day_str, tech = key.rsplit(":", 1)
+        if tech != old_key:
+            continue
+        work_days.setdefault(f"{day_str}:{new_key}", status)
+
+    weekly_goals = data.setdefault("weekly_goals", {})
+    for key, amount in list(weekly_goals.items()):
+        week_str, tech = key.rsplit(":", 1)
+        if tech != old_key:
+            continue
+        weekly_goals.setdefault(f"{week_str}:{new_key}", amount)
+
+    bot_settings = data.setdefault("bot_settings", {})
+    for old_setting, new_setting in (
+        (_daily_goal_key(old_key), _daily_goal_key(new_key)),
+        (_goal_work_days_key(old_key), _goal_work_days_key(new_key)),
+    ):
+        if old_setting in bot_settings and new_setting not in bot_settings:
+            bot_settings[new_setting] = bot_settings[old_setting]
+    _save_json(data)

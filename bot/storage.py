@@ -344,6 +344,28 @@ def read_all_rows(owner_telegram_id: int | None = None) -> list[dict[str, str]]:
     return _read_all_rows(owner_telegram_id)
 
 
+def migrate_orphan_job_lines(owner_telegram_id: int) -> int:
+    """Assign rows without owner to the legacy user. Returns count updated."""
+    if _use_db():
+        from bot.db_store import migrate_orphan_job_lines as db_migrate
+
+        return db_migrate(owner_telegram_id)
+
+    _ensure_csv()
+    with JOB_LINES_CSV.open(encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    owner = str(owner_telegram_id)
+    updated = 0
+    for row in rows:
+        row.setdefault("owner_telegram_id", "")
+        if not row["owner_telegram_id"]:
+            row["owner_telegram_id"] = owner
+            updated += 1
+    if updated:
+        _write_all_rows(rows)
+    return updated
+
+
 def write_all_rows(rows: list[dict[str, str]]) -> None:
     _write_all_rows(rows)
 

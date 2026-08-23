@@ -261,19 +261,22 @@ def touch_user(
     )
 
 
-def ensure_legacy_migration() -> None:
-    """Assign legacy TECH_ID label to the first allowed user when no profiles exist."""
-    if list_active_users():
-        return
-
-    telegram_id: int | None = None
+def _legacy_owner_telegram_id() -> int | None:
     if TELEGRAM_ALLOWED_USER_IDS:
-        telegram_id = next(iter(TELEGRAM_ALLOWED_USER_IDS))
+        return next(iter(TELEGRAM_ALLOWED_USER_IDS))
+    users = list_active_users()
+    if len(users) == 1:
+        return users[0].telegram_user_id
+    return None
 
-    import os
 
+def ensure_legacy_migration() -> None:
+    """Create legacy user profile and attach pre-multi-user data to their Telegram ID."""
+    telegram_id = _legacy_owner_telegram_id()
     if telegram_id is None:
         return
+
+    import os
 
     chat_raw = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     chat_id = int(chat_raw) if chat_raw.isdigit() else telegram_id
@@ -284,3 +287,10 @@ def ensure_legacy_migration() -> None:
         display_name="Legacy user",
         tech_label=label,
     )
+
+    from bot.settings_store import migrate_legacy_settings_keys
+    from bot.storage import migrate_orphan_job_lines
+
+    migrate_orphan_job_lines(telegram_id)
+    migrate_legacy_settings_keys(TECH_ID, user_settings_key(telegram_id))
+

@@ -47,7 +47,22 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, str]:
     return normalized
 
 
-def read_all_rows(owner_telegram_id: int | None = None) -> list[dict[str, str]]:
+def migrate_orphan_job_lines(owner_telegram_id: int) -> int:
+    """Assign rows without owner to the legacy user. Returns count updated."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE job_lines
+            SET owner_telegram_id = %s
+            WHERE owner_telegram_id IS NULL OR owner_telegram_id = 0
+            """,
+            (owner_telegram_id,),
+        )
+        updated = cur.rowcount
+        conn.commit()
+    return updated
+
+
     with _connect() as conn, conn.cursor() as cur:
         if owner_telegram_id is not None:
             cur.execute(
