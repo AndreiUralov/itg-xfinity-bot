@@ -74,6 +74,7 @@ def ensure_users_schema() -> None:
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     ALTER TABLE bot_users DROP CONSTRAINT IF EXISTS bot_users_tech_id_key;
+    ALTER TABLE job_lines ADD COLUMN IF NOT EXISTS owner_telegram_id BIGINT;
     CREATE INDEX IF NOT EXISTS idx_job_lines_owner ON job_lines(owner_telegram_id);
   """
     statements = [s.strip() for s in sql.split(";") if s.strip()]
