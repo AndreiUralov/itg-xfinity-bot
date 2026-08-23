@@ -22,7 +22,6 @@ sys.path.insert(0, str(ROOT))
 
 from bot.config import TELEGRAM_BOT_TOKEN, WEBHOOK_URL
 from bot.handlers import (
-    cmd_bind,
     cmd_cancel,
     cmd_fuel,
     cmd_goal,
@@ -34,8 +33,6 @@ from bot.handlers import (
     cmd_start,
     cmd_tips,
     cmd_today,
-    cmd_unbind,
-    cmd_users,
     cmd_week,
     handle_callback,
     handle_photo,
@@ -51,8 +48,7 @@ logger = logging.getLogger("itg.bot")
 
 BOT_COMMANDS = [
     BotCommand("start", "Сводка за день и неделю"),
-    BotCommand("setup", "Профиль / привязка Tech ID"),
-    BotCommand("bind", "Админ: привязать техника"),
+    BotCommand("setup", "Подпись в инвойсе (Tech ID)"),
     BotCommand("on", "На работе сегодня"),
     BotCommand("off", "Выходной сегодня"),
     BotCommand("goal", "Цель на день и неделю в $"),
@@ -124,9 +120,6 @@ def _build_application(*, webhook: bool) -> Application:
     app.add_handler(TypeHandler(Update, _maybe_run_scheduled_tasks), group=-1)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("setup", cmd_setup))
-    app.add_handler(CommandHandler("bind", cmd_bind))
-    app.add_handler(CommandHandler("unbind", cmd_unbind))
-    app.add_handler(CommandHandler("users", cmd_users))
     app.add_handler(CommandHandler("on", cmd_on))
     app.add_handler(CommandHandler("off", cmd_off))
     app.add_handler(CommandHandler("goal", cmd_goal))

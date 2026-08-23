@@ -22,8 +22,6 @@ from bot.config import (  # noqa: E402
     DEFAULT_WORK_AREA,
     PAY_DB_PATH,
     PHOTO_WAIT_SECONDS,
-    TECH_BINDINGS,
-    TELEGRAM_ADMIN_USER_IDS,
     TELEGRAM_ALLOWED_USER_IDS,
 )
 from bot.keyboards import (  # noqa: E402
@@ -74,18 +72,14 @@ from bot.settings_store import (  # noqa: E402
 )
 from bot.storage import save_fuel, save_job, save_tip, week_bounds, week_totals  # noqa: E402
 from bot.users import (  # noqa: E402
-    LinkNotAllowedError,
-    TechIdTakenError,
     UserProfile,
     ensure_legacy_migration,
-    get_user,
-    is_admin,
-    link_user,
-    list_active_users,
-    normalize_tech_id,
-    touch_chat,
-    unlink_user,
-    validate_tech_id,
+    get_or_create_user,
+    normalize_tech_label,
+    set_tech_label,
+    touch_user,
+    user_settings_key,
+    validate_tech_label,
 )
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
 from datetime_miami import miami_now  # noqa: E402
@@ -137,94 +131,34 @@ def _chat_id(update: Update) -> int:
 
 
 def _remember_user(context: ContextTypes.DEFAULT_TYPE, profile: UserProfile) -> None:
-    context.user_data["_tech_id"] = profile.tech_id
+    context.user_data["_owner_id"] = profile.telegram_user_id
+    context.user_data["_tech_label"] = profile.tech_id
 
 
-def _tech_id(context: ContextTypes.DEFAULT_TYPE) -> str:
-    tech = context.user_data.get("_tech_id")
-    if not tech:
-        raise RuntimeError("tech_id missing from session")
-    return str(tech)
+def _owner_id(context: ContextTypes.DEFAULT_TYPE) -> int:
+    owner = context.user_data.get("_owner_id")
+    if owner is None:
+        raise RuntimeError("owner_id missing from session")
+    return int(owner)
 
 
-async def _prompt_link_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    context.user_data.pop("step", None)
-    target = update.message or (update.callback_query.message if update.callback_query else None)
-    if not target:
-        return
-    assigned = [tech for tech, uid in TECH_BINDINGS.items() if uid == _telegram_user_id(update)]
-    if assigned:
-        hint = (
-            f"Твой Tech ID: <code>{assigned[0]}</code>\n"
-            f"Команда: <code>/setup {assigned[0]}</code>"
-        )
-    else:
-        hint = "Попроси админа привязать аккаунт (ответом на твоё сообщение: <code>/bind I0KF</code>)"
-    text = (
-        "👋 <b>ITG Job Tracker</b>\n\n"
-        "Аккаунт ещё не привязан к Tech ID.\n"
-        f"{hint}"
-    )
-    if hasattr(target, "reply_text"):
-        await target.reply_text(text, parse_mode="HTML")
-    else:
-        await target.edit_message_text(text, parse_mode="HTML")
+def _tech_label(context: ContextTypes.DEFAULT_TYPE) -> str:
+    return str(context.user_data.get("_tech_label") or "")
 
 
-async def _ensure_linked(update: Update, context: ContextTypes.DEFAULT_TYPE) -> UserProfile | None:
+async def _ensure_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> UserProfile | None:
     if not _authorized(_telegram_user_id(update)):
         await _deny(update)
         return None
     ensure_legacy_migration()
-    profile = get_user(_telegram_user_id(update))
-    if profile:
-        touch_chat(profile.telegram_user_id, _chat_id(update), display_name=_display_name(update))
-        _remember_user(context, profile)
-        return profile
-    await _prompt_link_user(update, context)
-    return None
-
-
-async def _complete_link(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    tech_id: str,
-    *,
-    by_admin: bool = False,
-) -> bool:
-    try:
-        profile = link_user(
-            telegram_user_id=_telegram_user_id(update),
-            tech_id=tech_id,
-            chat_id=_chat_id(update),
-            display_name=_display_name(update),
-            by_admin=by_admin,
-        )
-    except TechIdTakenError:
-        target = update.message or update.callback_query.message
-        await target.reply_text(
-            f"⚠️ Tech ID <b>{normalize_tech_id(tech_id)}</b> уже привязан к другому аккаунту.",
-            parse_mode="HTML",
-        )
-        return False
-    except LinkNotAllowedError as exc:
-        target = update.message or update.callback_query.message
-        await target.reply_text(f"⚠️ {exc}")
-        return False
-    except ValueError as exc:
-        target = update.message or update.callback_query.message
-        await target.reply_text(f"⚠️ {exc}")
-        return False
-
-    context.user_data.pop("step", None)
-    _remember_user(context, profile)
-    target = update.message or update.callback_query.message
-    await target.reply_text(
-        f"✅ Привязано: <b>{profile.tech_id}</b>\n\n{_format_stats_block(profile.tech_id)}",
-        parse_mode="HTML",
-        reply_markup=main_menu_keyboard(),
+    profile = get_or_create_user(
+        telegram_user_id=_telegram_user_id(update),
+        chat_id=_chat_id(update),
+        display_name=_display_name(update),
     )
-    return True
+    touch_user(profile.telegram_user_id, _chat_id(update), display_name=_display_name(update))
+    _remember_user(context, profile)
+    return profile
 
 
 def _reset_session(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -275,13 +209,13 @@ def _format_preview(
     pay_result=None,
     *,
     existing: dict[str, Any] | None = None,
-    tech_id: str | None = None,
+    owner_telegram_id: int | None = None,
 ) -> str:
     notice = _duplicate_notice(existing)
     hint_line = ""
     jn = data.get("job_number")
     if jn:
-        hint = lookup_job_hint(jn, tech_id)
+        hint = lookup_job_hint(jn, owner_telegram_id)
         if hint:
             hint_line = format_job_hint(hint) + "\n\n"
     subtypes = ", ".join(data.get("subtype_codes") or []) or "—"
@@ -305,13 +239,13 @@ def _format_preview(
     return "\n".join(lines)
 
 
-def _existing_for_job(data: dict[str, Any], tech_id: str) -> dict[str, Any] | None:
+def _existing_for_job(data: dict[str, Any], owner_telegram_id: int) -> dict[str, Any] | None:
     if data.get("from_edit"):
         return None
     job_number = data.get("job_number")
     if not job_number:
         return None
-    return find_existing_job(tech_id, job_number)
+    return find_existing_job(owner_telegram_id, job_number)
 
 
 def _preview_pay(data: dict, equipment: list[str] | None = None, product_code: str | None = None, addons: list[str] | None = None):
@@ -356,9 +290,9 @@ def _format_week_range(week_start: date, week_end: date) -> str:
     )
 
 
-def _workday_status_line(tech_id: str) -> str:
+def _workday_status_line(owner_telegram_id: int) -> str:
     today = miami_now().date()
-    status = get_work_day(today, tech_id)
+    status = get_work_day(today, user_settings_key(owner_telegram_id))
     date_label = today.strftime("%d.%m")
     if status == "working":
         return f"🟢 <b>На работе</b>  ·  {date_label}"
@@ -367,18 +301,18 @@ def _workday_status_line(tech_id: str) -> str:
     return f"⚪ Статус не отмечен  ·  {date_label}"
 
 
-def _goal_progress_line(tech_id: str) -> str:
-    return goals_progress_block(tech_id)
+def _goal_progress_line(owner_telegram_id: int) -> str:
+    return goals_progress_block(owner_telegram_id)
 
 
-def _format_stats_block(tech_id: str) -> str:
-    day = today_totals(tech_id)
-    week = week_totals(tech_id)
+def _format_stats_block(owner_telegram_id: int) -> str:
+    day = today_totals(owner_telegram_id)
+    week = week_totals(owner_telegram_id)
     today = miami_now().date()
-    work_days = count_work_days(week["week_start"], today, tech_id)
+    work_days = count_work_days(week['week_start'], today, user_settings_key(owner_telegram_id))
     week_range = _format_week_range(week["week_start"], week["week_end"])
 
-    lines = [_workday_status_line(tech_id), ""]
+    lines = [_workday_status_line(owner_telegram_id), ""]
 
     lines.append(
         f"📈 <b>Сегодня</b>  ·  {day['job_count']} {_jobs_word(day['job_count'])}  ·  "
@@ -405,7 +339,7 @@ def _format_stats_block(tech_id: str) -> str:
         f"   💵 ${week.get('tips', 0):,.2f}  ·  ⛽ ${week.get('fuel', 0):,.2f}"
     )
 
-    goal_block = _goal_progress_line(tech_id)
+    goal_block = _goal_progress_line(owner_telegram_id)
     if goal_block:
         lines.append("")
         lines.append(goal_block)
@@ -413,128 +347,65 @@ def _format_stats_block(tech_id: str) -> str:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_linked(update, context)
+    profile = await _ensure_user(update, context)
     if not profile:
         return
     _reset_session(context)
     _remember_user(context, profile)
     await update.message.reply_text(
         f"👋 <b>ITG Job Tracker</b>\n"
-        f"<i>Tech ID: {profile.tech_id}</i>\n\n"
-        f"{_format_stats_block(profile.tech_id)}",
+        f"<i>Подпись в инвойсе: {profile.tech_id}</i>\n\n"
+        f"{_format_stats_block(profile.telegram_user_id)}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
 
 
 async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(_telegram_user_id(update)):
-        return await _deny(update)
+    profile = await _ensure_user(update, context)
+    if not profile:
+        return
     args = (update.message.text or "").split()[1:]
     if not args:
-        profile = get_user(_telegram_user_id(update))
-        if profile:
-            await update.message.reply_text(
-                f"👤 <b>Профиль</b>\n"
-                f"Tech ID: <code>{profile.tech_id}</code>\n"
-                f"Имя: {profile.display_name or '—'}\n\n"
-                f"Сменить ID может только админ.",
-                parse_mode="HTML",
-            )
-            return
-        await _prompt_link_user(update, context)
-        return
-    await _complete_link(update, context, normalize_tech_id(args[0]))
-
-
-async def cmd_bind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_admin(_telegram_user_id(update)):
-        return await _deny(update)
-    args = (update.message.text or "").split()[1:]
-    if not args or not update.message.reply_to_message:
         await update.message.reply_text(
-            "Ответь на сообщение техника и напиши:\n<code>/bind I0KF</code>",
+            f"👤 <b>Профиль</b>\n"
+            f"Подпись в инвойсе: <code>{profile.tech_id}</code>\n"
+            f"Имя: {profile.display_name or '—'}\n\n"
+            f"Сменить подпись: <code>/setup I0KF</code>",
             parse_mode="HTML",
         )
         return
-    target = update.message.reply_to_message.from_user
-    if not target:
-        await update.message.reply_text("⚠️ Не удалось определить пользователя.")
-        return
-    tech_id = normalize_tech_id(args[0])
     try:
-        profile = link_user(
-            telegram_user_id=target.id,
-            tech_id=tech_id,
-            chat_id=update.message.reply_to_message.chat_id,
-            display_name=target.first_name or target.username or "",
-            by_admin=True,
-        )
-    except TechIdTakenError:
-        await update.message.reply_text(
-            f"⚠️ Tech ID <b>{tech_id}</b> уже привязан к другому аккаунту.",
-            parse_mode="HTML",
-        )
-        return
+        profile = set_tech_label(profile.telegram_user_id, normalize_tech_label(args[0]))
     except ValueError as exc:
         await update.message.reply_text(f"⚠️ {exc}")
         return
+    _remember_user(context, profile)
     await update.message.reply_text(
-        f"✅ <b>{profile.tech_id}</b> привязан к {profile.display_name or target.id}",
+        f"✅ Подпись в инвойсе: <b>{profile.tech_id}</b>",
         parse_mode="HTML",
     )
 
 
-async def cmd_unbind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_admin(_telegram_user_id(update)):
-        return await _deny(update)
-    if not update.message.reply_to_message:
-        await update.message.reply_text("Ответь на сообщение техника: <code>/unbind</code>", parse_mode="HTML")
-        return
-    target = update.message.reply_to_message.from_user
-    if not target:
-        return
-    if unlink_user(target.id):
-        await update.message.reply_text(f"✅ Аккаунт {target.first_name or target.id} отвязан.")
-    else:
-        await update.message.reply_text("⚠️ У этого пользователя нет привязки.")
-
-
-async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_admin(_telegram_user_id(update)):
-        return await _deny(update)
-    users = list_active_users()
-    if not users:
-        await update.message.reply_text("Пока никто не привязан.")
-        return
-    lines = ["👥 <b>Привязанные техники</b>\n"]
-    for user in users:
-        lines.append(
-            f"• <code>{user.tech_id}</code> — {user.display_name or '—'} "
-            f"(tg: <code>{user.telegram_user_id}</code>)"
-        )
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
-
 async def cmd_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_linked(update, context)
+    profile = await _ensure_user(update, context)
     if not profile:
         return
     today = miami_now().date()
-    set_work_day(today, profile.tech_id, "working")
+    set_work_day(today, user_settings_key(profile.telegram_user_id), "working")
     await update.message.reply_text(
         f"🟢 Отмечено: <b>на работе</b> ({today.strftime('%d.%m.%Y')})\n\n"
-        f"{_format_stats_block(profile.tech_id)}",
+        f"{_format_stats_block(profile.telegram_user_id)}",
         parse_mode="HTML",
     )
 
 
 async def cmd_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_linked(update, context)
+    profile = await _ensure_user(update, context)
     if not profile:
         return
     today = miami_now().date()
-    set_work_day(today, profile.tech_id, "off")
+    set_work_day(today, user_settings_key(profile.telegram_user_id), "off")
     await update.message.reply_text(
         f"🏖 Отмечено: <b>выходной</b> ({today.strftime('%d.%m.%Y')})",
         parse_mode="HTML",
@@ -542,18 +413,19 @@ async def cmd_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_linked(update, context)
+    profile = await _ensure_user(update, context)
     if not profile:
         return
-    tech_id = profile.tech_id
+    owner_telegram_id = profile.telegram_user_id
+    settings_key = user_settings_key(owner_telegram_id)
     today = miami_now().date()
     week_start, week_end = week_bounds(today)
     parts = (update.message.text or "").split()
     args = parts[1:]
 
     if not args:
-        week_goal = get_weekly_goal(week_start, tech_id)
-        day_goal = get_effective_daily_goal(week_start, tech_id)
+        week_goal = get_weekly_goal(week_start, user_settings_key(owner_telegram_id))
+        day_goal = get_effective_daily_goal(week_start, user_settings_key(owner_telegram_id))
         if not week_goal and not day_goal:
             await update.message.reply_text(
                 f"🎯 Цели не заданы.\n\n"
@@ -564,23 +436,23 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         lines = ["🎯 <b>Цели</b>\n"]
         if day_goal:
-            lines.append(daily_goal_progress_line(tech_id))
+            lines.append(daily_goal_progress_line(owner_telegram_id))
         if week_goal:
-            lines.append(weekly_goal_progress_line(tech_id))
+            lines.append(weekly_goal_progress_line(owner_telegram_id))
         lines.append("\nСбросить всё: <code>/goal off</code>")
         lines.append("Только день: <code>/goal day off</code>")
         await update.message.reply_text("\n".join(lines), parse_mode="HTML")
         return
 
     if args[0].lower() in ("off", "clear", "сброс", "0"):
-        clear_weekly_goal(week_start, tech_id)
-        clear_daily_goal(tech_id)
+        clear_weekly_goal(week_start, user_settings_key(owner_telegram_id))
+        clear_daily_goal(user_settings_key(owner_telegram_id))
         await update.message.reply_text("🎯 Недельная и дневная цели сброшены.")
         return
 
     if args[0].lower() in ("day", "день", "d"):
         if len(args) < 2:
-            day_goal = get_effective_daily_goal(week_start, tech_id)
+            day_goal = get_effective_daily_goal(week_start, user_settings_key(owner_telegram_id))
             if not day_goal:
                 await update.message.reply_text(
                     "Дневная цель не задана.\nПример: <code>/goal day 351</code>",
@@ -588,12 +460,12 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
                 return
             await update.message.reply_text(
-                f"📍 Дневная цель: <b>${day_goal:,.2f}</b>\n{daily_goal_progress_line(tech_id)}",
+                f"📍 Дневная цель: <b>${day_goal:,.2f}</b>\n{daily_goal_progress_line(owner_telegram_id)}",
                 parse_mode="HTML",
             )
             return
         if args[1].lower() in ("off", "clear", "сброс", "0"):
-            clear_daily_goal(tech_id)
+            clear_daily_goal(user_settings_key(owner_telegram_id))
             await update.message.reply_text("📍 Дневная цель сброшена.")
             return
         try:
@@ -604,9 +476,9 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if amount <= 0:
             await update.message.reply_text("⚠️ Цель должна быть больше 0.")
             return
-        set_daily_goal(tech_id, amount)
+        set_daily_goal(user_settings_key(owner_telegram_id), amount)
         await update.message.reply_text(
-            f"📍 Дневная цель: <b>${amount:,.2f}</b>\n{daily_goal_progress_line(tech_id)}",
+            f"📍 Дневная цель: <b>${amount:,.2f}</b>\n{daily_goal_progress_line(owner_telegram_id)}",
             parse_mode="HTML",
         )
         return
@@ -631,15 +503,15 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except ValueError:
             pass
 
-    daily = set_weekly_goal_with_daily(week_start, tech_id, amount, work_days=work_days)
-    days = get_goal_work_days(tech_id)
-    week = week_totals(tech_id, week_start)
+    daily = set_weekly_goal_with_daily(week_start, user_settings_key(owner_telegram_id), amount, work_days=work_days)
+    days = get_goal_work_days(user_settings_key(owner_telegram_id))
+    week = week_totals(owner_telegram_id, week_start)
     pct = min(100, round(week["production"] / amount * 100))
     await update.message.reply_text(
         f"🎯 Цель на неделю: <b>${amount:,.2f}</b>\n"
         f"📍 Дневная цель: <b>${daily:,.2f}</b> ({days} раб. дн.)\n"
         f"Уже за неделю: ${week['production']:,.2f} ({pct}%)\n"
-        f"{daily_goal_progress_line(tech_id)}",
+        f"{daily_goal_progress_line(owner_telegram_id)}",
         parse_mode="HTML",
     )
 
@@ -649,12 +521,13 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return await _deny(update)
     await update.message.reply_text(
         "📖 <b>Как пользоваться</b>\n\n"
-        "1. Админ привязывает Tech ID (<code>/bind</code>) или ты в whitelist — <code>/setup I0KF</code>\n"
-        "2. Сделай скрин(ы) работы в Tech360\n"
-        "3. Отправь в бот (альбомом или по одному)\n"
-        "4. Проверь данные → подтверди\n"
-        "5. Выбери оборудование (если нужно)\n"
-        "6. Работа сохранится для недельного инвойса ATN\n\n"
+        "1. Бот узнаёт тебя по Telegram — ничего привязывать не нужно\n"
+        "2. Подпись в инвойсе (необязательно): <code>/setup I0KF</code>\n"
+        "3. Сделай скрин(ы) работы в Tech360\n"
+        "4. Отправь в бот (альбомом или по одному)\n"
+        "5. Проверь данные → подтверди\n"
+        "6. Выбери оборудование (если нужно)\n"
+        "7. Работа сохранится для недельного инвойса ATN\n\n"
         "<b>Чаевые:</b> /tips или «💵 Чаевые» — не идут в план.\n"
         "<b>Бензин:</b> /fuel или «⛽ Бензин» — учёт расходов, не в план.\n\n"
         "<b>Быстрый ввод без скрина:</b>\n"
@@ -682,19 +555,20 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_linked(update, context)
+    profile = await _ensure_user(update, context)
     if not profile:
         return
-    tech_id = profile.tech_id
+    owner_telegram_id = profile.telegram_user_id
+    settings_key = user_settings_key(owner_telegram_id)
     db = _get_db()
-    totals = week_totals(tech_id)
+    totals = week_totals(owner_telegram_id)
     truck = db["deductions"]["truck"]["full_week"]
     meter = db["deductions"]["meter"]["per_week"]
     tips = totals.get("tips", 0.0)
     fuel = totals.get("fuel", 0.0)
     net = round(totals["production"] - truck - meter + tips - fuel, 2)
-    work_days = count_work_days(totals["week_start"], totals["week_end"], tech_id)
-    goal_line = goals_progress_block(tech_id)
+    work_days = count_work_days(totals['week_start'], totals['week_end'], user_settings_key(owner_telegram_id))
+    goal_line = goals_progress_block(owner_telegram_id)
     extra = f"\n{goal_line}" if goal_line else ""
     if work_days:
         extra += f"\nРабочих дней: {work_days}"
@@ -712,7 +586,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-def _format_today_list(jobs: list[dict], tech_id: str) -> str:
+def _format_today_list(jobs: list[dict], owner_telegram_id: int) -> str:
     today = miami_now().date()
     months = (
         "янв", "фев", "мар", "апр", "май", "июн",
@@ -723,8 +597,8 @@ def _format_today_list(jobs: list[dict], tech_id: str) -> str:
         return f"📋 <b>Сегодня ({date_label})</b>\n\nНет сохранённых работ."
 
     total = round(sum(j["total"] for j in jobs), 2)
-    tips_total = round(sum(float(r["item_total"]) for r in get_today_tips(tech_id)), 2)
-    fuel_total = round(sum(float(r["item_total"]) for r in get_today_fuel(tech_id)), 2)
+    tips_total = round(sum(float(r["item_total"]) for r in get_today_tips(owner_telegram_id)), 2)
+    fuel_total = round(sum(float(r["item_total"]) for r in get_today_fuel(owner_telegram_id)), 2)
     count = len(jobs)
     word = "работа" if count == 1 else ("работы" if 2 <= count <= 4 else "работ")
     header = f"📋 <b>Сегодня ({date_label})</b> — {count} {word}, <b>${total:.2f}</b>"
@@ -762,8 +636,8 @@ def _format_today_job(job: dict) -> str:
     return "\n".join(lines)
 
 
-def _tips_menu_text(tech_id: str) -> str:
-    tips_today = get_today_tips(tech_id)
+def _tips_menu_text(owner_telegram_id: int) -> str:
+    tips_today = get_today_tips(owner_telegram_id)
     total = round(sum(float(r["item_total"]) for r in tips_today), 2)
     count = len(tips_today)
     lines = [
@@ -777,8 +651,8 @@ def _tips_menu_text(tech_id: str) -> str:
     return "\n".join(lines)
 
 
-async def _send_tips_menu(target, tech_id: str, *, edit: bool = False) -> None:
-    text = _tips_menu_text(tech_id)
+async def _send_tips_menu(target, owner_telegram_id: int, *, edit: bool = False) -> None:
+    text = _tips_menu_text(owner_telegram_id)
     markup = tips_keyboard()
     if edit and hasattr(target, "edit_message_text"):
         await target.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
@@ -787,15 +661,15 @@ async def _send_tips_menu(target, tech_id: str, *, edit: bool = False) -> None:
 
 
 async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_linked(update, context)
+    profile = await _ensure_user(update, context)
     if not profile:
         return
     context.user_data["step"] = "pick_tip"
-    await _send_tips_menu(update.message, profile.tech_id)
+    await _send_tips_menu(update.message, profile.telegram_user_id)
 
 
-def _fuel_menu_text(tech_id: str) -> str:
-    fuel_today = get_today_fuel(tech_id)
+def _fuel_menu_text(owner_telegram_id: int) -> str:
+    fuel_today = get_today_fuel(owner_telegram_id)
     total = round(sum(float(r["item_total"]) for r in fuel_today), 2)
     count = len(fuel_today)
     lines = [
@@ -809,8 +683,8 @@ def _fuel_menu_text(tech_id: str) -> str:
     return "\n".join(lines)
 
 
-async def _send_fuel_menu(target, tech_id: str, *, edit: bool = False) -> None:
-    text = _fuel_menu_text(tech_id)
+async def _send_fuel_menu(target, owner_telegram_id: int, *, edit: bool = False) -> None:
+    text = _fuel_menu_text(owner_telegram_id)
     markup = fuel_keyboard()
     if edit and hasattr(target, "edit_message_text"):
         await target.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
@@ -819,16 +693,16 @@ async def _send_fuel_menu(target, tech_id: str, *, edit: bool = False) -> None:
 
 
 async def cmd_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_linked(update, context)
+    profile = await _ensure_user(update, context)
     if not profile:
         return
     context.user_data["step"] = "pick_fuel"
-    await _send_fuel_menu(update.message, profile.tech_id)
+    await _send_fuel_menu(update.message, profile.telegram_user_id)
 
 
-async def _send_today_list(target, tech_id: str, *, edit: bool = False) -> None:
-    jobs = get_today_jobs(tech_id)
-    text = _format_today_list(jobs, tech_id)
+async def _send_today_list(target, owner_telegram_id: int, *, edit: bool = False) -> None:
+    jobs = get_today_jobs(owner_telegram_id)
+    text = _format_today_list(jobs, owner_telegram_id)
     markup = today_list_keyboard(jobs) if jobs else None
     if edit:
         await target.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
@@ -837,21 +711,26 @@ async def _send_today_list(target, tech_id: str, *, edit: bool = False) -> None:
 
 
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_linked(update, context)
+    profile = await _ensure_user(update, context)
     if not profile:
         return
-    await _send_today_list(update.message, profile.tech_id)
+    await _send_today_list(update.message, profile.telegram_user_id)
 
 
 async def cmd_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_linked(update, context)
+    profile = await _ensure_user(update, context)
     if not profile:
         return
     from weekly_report import current_payroll_week, generate_weekly_report
 
     week_start, week_end = current_payroll_week(datetime.now(TZ).date())
     try:
-        result = generate_weekly_report(week_start=week_start, week_end=week_end, tech_id=profile.tech_id)
+        result = generate_weekly_report(
+            week_start=week_start,
+            week_end=week_end,
+            tech_id=profile.tech_id,
+            owner_telegram_id=profile.telegram_user_id,
+        )
     except Exception as exc:
         await update.message.reply_text(f"⚠️ Не удалось создать PDF: {exc}")
         return
@@ -879,8 +758,8 @@ async def _download_photos(context: ContextTypes.DEFAULT_TYPE, file_ids: list[st
     return paths
 
 
-def _apply_hint_to_extracted(extracted: dict[str, Any], tech_id: str) -> dict[str, Any]:
-    hint = lookup_job_hint(extracted.get("job_number", ""), tech_id)
+def _apply_hint_to_extracted(extracted: dict[str, Any], owner_telegram_id: int) -> dict[str, Any]:
+    hint = lookup_job_hint(extracted.get("job_number", ""), owner_telegram_id)
     if not hint:
         return extracted
     if not extracted.get("work_type") and hint.get("work_type"):
@@ -895,15 +774,15 @@ def _apply_hint_to_extracted(extracted: dict[str, Any], tech_id: str) -> dict[st
 
 
 async def _start_quick_input(update: Update, context: ContextTypes.DEFAULT_TYPE, extracted: dict) -> None:
-    tech_id = _tech_id(context)
-    extracted = _apply_hint_to_extracted(extracted, tech_id)
+    owner_telegram_id = _owner_id(context)
+    extracted = _apply_hint_to_extracted(extracted, owner_telegram_id)
     context.user_data["extracted"] = extracted
     context.user_data["equipment"] = []
     context.user_data["optional_addons"] = []
     context.user_data["product_code"] = None
 
     intro = f"⚡ Быстрый ввод Job# <code>{extracted['job_number']}</code>"
-    hint = lookup_job_hint(extracted["job_number"], tech_id)
+    hint = lookup_job_hint(extracted["job_number"], owner_telegram_id)
     if hint:
         intro += f"\n{format_job_hint(hint)}"
 
@@ -926,7 +805,7 @@ async def _start_quick_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
     pay = _preview_pay(extracted)
     await update.message.reply_text(
         f"{intro}\n\n"
-        + _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
+        + _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _owner_id(context)), owner_telegram_id=_owner_id(context)),
         parse_mode="HTML",
         reply_markup=_confirm_markup(extracted),
     )
@@ -966,8 +845,8 @@ async def _show_preview_or_ask_details(message_target, context, extracted: dict)
         _format_preview(
             extracted,
             pay if not pay.needs_user_input else None,
-            existing=_existing_for_job(extracted, _tech_id(context)),
-            tech_id=_tech_id(context),
+            existing=_existing_for_job(extracted, _owner_id(context)),
+            owner_telegram_id=_owner_id(context),
         ),
         parse_mode="HTML",
         reply_markup=_confirm_markup(extracted),
@@ -978,25 +857,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not _authorized(_telegram_user_id(update)):
         return await _deny(update)
 
+    profile = await _ensure_user(update, context)
+    if not profile:
+        return
+
     step = context.user_data.get("step")
     text = (update.message.text or "").strip()
-
-    if step == "await_tech_id":
-        if not validate_tech_id(text):
-            await update.message.reply_text(
-                "⚠️ Неверный Tech ID. Пример: <code>I0KF</code>",
-                parse_mode="HTML",
-            )
-            return
-        await _complete_link(update, context, normalize_tech_id(text))
-        return
-
-    profile = get_user(_telegram_user_id(update))
-    if not profile:
-        await _prompt_link_user(update, context)
-        return
-    touch_chat(profile.telegram_user_id, _chat_id(update), display_name=_display_name(update))
-    _remember_user(context, profile)
 
     extracted: dict = context.user_data.get("extracted", empty_extraction())
 
@@ -1015,7 +881,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted)
         await update.message.reply_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _owner_id(context)), owner_telegram_id=_owner_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1031,7 +897,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted)
         await update.message.reply_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _owner_id(context)), owner_telegram_id=_owner_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1120,7 +986,7 @@ async def _process_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     pay = _preview_pay(extracted)
     await status_msg.edit_text(
-        _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
+        _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _owner_id(context)), owner_telegram_id=_owner_id(context)),
         parse_mode="HTML",
         reply_markup=_confirm_markup(extracted),
     )
@@ -1143,12 +1009,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not _authorized(_telegram_user_id(update)):
         return await _deny(update)
 
-    profile = get_user(_telegram_user_id(update))
+    profile = await _ensure_user(update, context)
     if not profile:
-        await _prompt_link_user(update, context)
         return
-    touch_chat(profile.telegram_user_id, _chat_id(update), display_name=_display_name(update))
-    _remember_user(context, profile)
 
     photo = update.message.photo[-1]
     file_id = photo.file_id
@@ -1206,13 +1069,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     query = update.callback_query
     await query.answer()
-    profile = get_user(query.from_user.id)
+    profile = await _ensure_user(update, context)
     if not profile:
-        await query.answer("Аккаунт не привязан. Попроси админа: /bind", show_alert=True)
         return
-    touch_chat(profile.telegram_user_id, query.message.chat_id, display_name=_display_name(update))
-    _remember_user(context, profile)
-    tech_id = profile.tech_id
+    owner_telegram_id = profile.telegram_user_id
+    settings_key = user_settings_key(owner_telegram_id)
 
     data = query.data or ""
     extracted: dict = context.user_data.get("extracted", empty_extraction())
@@ -1235,7 +1096,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         context.user_data["step"] = "confirm"
         await query.edit_message_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _owner_id(context)), owner_telegram_id=_owner_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1265,16 +1126,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data == "work:on":
         today = miami_now().date()
-        set_work_day(today, tech_id, "working")
+        set_work_day(today, user_settings_key(owner_telegram_id), "working")
         await query.edit_message_text(
-            f"🟢 <b>На работе</b> — {today.strftime('%d.%m.%Y')}\n\n{_format_stats_block(tech_id)}",
+            f"🟢 <b>На работе</b> — {today.strftime('%d.%m.%Y')}\n\n{_format_stats_block(owner_telegram_id)}",
             parse_mode="HTML",
         )
         return
 
     if data == "work:off":
         today = miami_now().date()
-        set_work_day(today, tech_id, "off")
+        set_work_day(today, user_settings_key(owner_telegram_id), "off")
         await query.edit_message_text(
             f"🏖 <b>Выходной</b> — {today.strftime('%d.%m.%Y')}",
             parse_mode="HTML",
@@ -1303,7 +1164,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted, context.user_data.get("equipment"), context.user_data.get("product_code"), context.user_data.get("optional_addons"))
         await query.edit_message_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _owner_id(context)), owner_telegram_id=_owner_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1320,7 +1181,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             context.user_data.get("optional_addons"),
         )
         await query.edit_message_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _owner_id(context)), owner_telegram_id=_owner_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1399,7 +1260,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        existing = _existing_for_job(extracted, _tech_id(context))
+        existing = _existing_for_job(extracted, _owner_id(context))
         if existing and existing.get("scope") == "today" and not context.user_data.get("allow_duplicate"):
             context.user_data["pending_rule_id"] = rule["id"]
             await query.edit_message_text(
@@ -1417,7 +1278,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         action = data[5:]
         if action == "menu":
             context.user_data["step"] = "pick_tip"
-            await _send_tips_menu(query, tech_id, edit=True)
+            await _send_tips_menu(query, owner_telegram_id, edit=True)
             return
         if action == "cancel":
             context.user_data.pop("step", None)
@@ -1442,7 +1303,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         action = data[5:]
         if action == "menu":
             context.user_data["step"] = "pick_fuel"
-            await _send_fuel_menu(query, tech_id, edit=True)
+            await _send_fuel_menu(query, owner_telegram_id, edit=True)
             return
         if action == "cancel":
             context.user_data.pop("step", None)
@@ -1483,7 +1344,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         context.user_data["step"] = "confirm"
         await query.edit_message_text(
-            _format_preview(extracted, pay, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
+            _format_preview(extracted, pay, existing=_existing_for_job(extracted, _owner_id(context)), owner_telegram_id=_owner_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1523,7 +1384,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         pay = _preview_pay(extracted, [], context.user_data.get("product_code"), [])
         rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
         rule_id = rule["id"] if rule else "manual"
-        existing = _existing_for_job(extracted, _tech_id(context))
+        existing = _existing_for_job(extracted, _owner_id(context))
         if existing and existing.get("scope") == "today" and not context.user_data.get("allow_duplicate"):
             context.user_data["pending_rule_id"] = rule_id
             await query.edit_message_text(
@@ -1562,7 +1423,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
         rule_id = rule["id"] if rule else "manual"
-        existing = _existing_for_job(extracted, _tech_id(context))
+        existing = _existing_for_job(extracted, _owner_id(context))
         if existing and existing.get("scope") == "today" and not context.user_data.get("allow_duplicate"):
             context.user_data["pending_rule_id"] = rule_id
             await query.edit_message_text(
@@ -1576,12 +1437,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if data == "today:refresh" or data == "today:back":
-        await _send_today_list(query, tech_id, edit=True)
+        await _send_today_list(query, owner_telegram_id, edit=True)
         return
 
     if data.startswith("today:view:"):
         job_number = data.split(":", 2)[2]
-        job = get_job(tech_id, job_number)
+        job = get_job(owner_telegram_id, job_number)
         if not job:
             await query.edit_message_text("⚠️ Работа не найдена (возможно уже удалена).")
             return
@@ -1594,7 +1455,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("today:delete:"):
         job_number = data.split(":", 2)[2]
-        job = get_job(tech_id, job_number)
+        job = get_job(owner_telegram_id, job_number)
         if not job:
             await query.edit_message_text("⚠️ Работа не найдена.")
             return
@@ -1610,7 +1471,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("today:delok:"):
         job_number = data.split(":", 2)[2]
-        ok, removed = delete_job(tech_id, job_number)
+        ok, removed = delete_job(owner_telegram_id, job_number)
         if not ok:
             await query.edit_message_text("⚠️ Не удалось удалить — работа не найдена.")
             return
@@ -1623,11 +1484,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("today:edit:"):
         job_number = data.split(":", 2)[2]
-        job = get_job(tech_id, job_number)
+        job = get_job(owner_telegram_id, job_number)
         if not job:
             await query.edit_message_text("⚠️ Работа не найдена.")
             return
-        delete_job(tech_id, job_number)
+        delete_job(owner_telegram_id, job_number)
         _reset_session(context)
         extracted = job_to_session_data(job)
         context.user_data["extracted"] = extracted
@@ -1639,7 +1500,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(
             "✏️ <b>Пересчёт</b> — старая запись удалена.\n"
             "Проверь данные и подтверди заново:\n\n"
-            + _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
+            + _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _owner_id(context)), owner_telegram_id=_owner_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1678,32 +1539,32 @@ async def _respond(target, text: str, **kwargs) -> None:
 
 
 async def _save_standalone_tip(target, context, tip_amount: float) -> None:
-    tech_id = _tech_id(context)
+    owner_telegram_id = _owner_id(context)
     try:
-        save_tip(tech_id=tech_id, amount=tip_amount)
+        save_tip(owner_telegram_id=owner_telegram_id, tech_label=_tech_label(context), amount=tip_amount)
     except Exception as exc:
         await _respond(target, f"⚠️ Не удалось сохранить чаевые: {exc}")
         return
     context.user_data.pop("step", None)
     await _respond(
         target,
-        f"✅ <b>Чаевые ${tip_amount:.2f}</b> добавлены\n\n{_format_stats_block(tech_id)}",
+        f"✅ <b>Чаевые ${tip_amount:.2f}</b> добавлены\n\n{_format_stats_block(owner_telegram_id)}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
 
 
 async def _save_standalone_fuel(target, context, fuel_amount: float) -> None:
-    tech_id = _tech_id(context)
+    owner_telegram_id = _owner_id(context)
     try:
-        save_fuel(tech_id=tech_id, amount=fuel_amount)
+        save_fuel(owner_telegram_id=owner_telegram_id, tech_label=_tech_label(context), amount=fuel_amount)
     except Exception as exc:
         await _respond(target, f"⚠️ Не удалось сохранить бензин: {exc}")
         return
     context.user_data.pop("step", None)
     await _respond(
         target,
-        f"✅ <b>Бензин ${fuel_amount:.2f}</b> добавлен\n\n{_format_stats_block(tech_id)}",
+        f"✅ <b>Бензин ${fuel_amount:.2f}</b> добавлен\n\n{_format_stats_block(owner_telegram_id)}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
@@ -1717,18 +1578,20 @@ async def _save_and_finish(target, context, extracted: dict, pay, rule_id: str) 
         await _respond(target, "⚠️ Нет адреса. Отправь скрин с адресом или /cancel.")
         return
 
-    tech_id = _tech_id(context)
+    owner_telegram_id = _owner_id(context)
+    tech_label = _tech_label(context)
     work_area = extracted.get("work_area") or DEFAULT_WORK_AREA
     today = miami_now()
     invoice_rows = pay.to_invoice_rows(
-        tech_id,
+        tech_label,
         work_area,
         extracted["address"].upper(),
         today.date(),
     )
 
     save_job(
-        tech_id=tech_id,
+        owner_telegram_id=owner_telegram_id,
+        tech_label=tech_label,
         job_number=extracted["job_number"],
         work_area=work_area,
         address=extracted["address"].upper(),
@@ -1747,7 +1610,7 @@ async def _save_and_finish(target, context, extracted: dict, pay, rule_id: str) 
         f"✅ <b>Сохранено — Job# {extracted['job_number']}</b>\n\n"
         f"{lines_text}\n"
         f"<b>За работу: ${pay.total:.2f}</b>\n\n"
-        f"{_format_stats_block(tech_id)}",
+        f"{_format_stats_block(owner_telegram_id)}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
