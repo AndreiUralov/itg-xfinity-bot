@@ -35,7 +35,20 @@ CREATE TABLE IF NOT EXISTS job_lines (
 );
 CREATE INDEX IF NOT EXISTS idx_job_lines_week_start ON job_lines(week_start);
 CREATE INDEX IF NOT EXISTS idx_job_lines_job_number ON job_lines(job_number);
+CREATE INDEX IF NOT EXISTS idx_job_lines_tech ON job_lines(tech);
 ALTER TABLE job_lines ADD COLUMN IF NOT EXISTS line_type TEXT NOT NULL DEFAULT 'production';
+ALTER TABLE job_lines ADD COLUMN IF NOT EXISTS owner_telegram_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_job_lines_owner ON job_lines(owner_telegram_id);
+CREATE TABLE IF NOT EXISTS bot_users (
+    telegram_user_id BIGINT PRIMARY KEY,
+    tech_id TEXT NOT NULL DEFAULT '',
+    chat_id BIGINT NOT NULL,
+    display_name TEXT DEFAULT '',
+    work_area TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 

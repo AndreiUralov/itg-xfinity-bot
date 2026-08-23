@@ -16,6 +16,11 @@ TELEGRAM_ALLOWED_USER_IDS = {
     for x in os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").split(",")
     if x.strip().isdigit()
 }
+TELEGRAM_ADMIN_USER_IDS = {
+    int(x.strip())
+    for x in os.getenv("TELEGRAM_ADMIN_USER_IDS", "").split(",")
+    if x.strip().isdigit()
+}
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini").strip()
 

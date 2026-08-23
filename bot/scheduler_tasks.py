@@ -10,17 +10,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT))
 
-from bot.config import TECH_ID
-from bot.jobs_manager import get_today_jobs, today_totals
 from bot.goals import goals_progress_block
-from bot.settings_store import (
-    count_work_days,
-    get_work_day,
-    mark_task_ran,
-    task_already_ran,
-)
+from bot.jobs_manager import get_today_jobs, today_totals
+from bot.settings_store import count_work_days, get_work_day, mark_task_ran, task_already_ran
 from bot.storage import week_bounds, week_totals
 from bot.telegram_notify import send_document, send_message
+from bot.users import UserProfile, ensure_legacy_migration, list_active_users, user_settings_key
 from datetime_miami import miami_now
 
 
@@ -35,43 +30,45 @@ def _workday_keyboard() -> dict:
     }
 
 
-def _goal_progress_block() -> str:
-    return goals_progress_block()
+def _scheduler_key(user: UserProfile) -> str:
+    return user_settings_key(user.telegram_user_id)
 
 
-def run_morning_checkin(force: bool = False) -> bool:
+def run_morning_checkin_for(user: UserProfile, *, force: bool = False) -> bool:
     today = miami_now().date()
-    if not force and task_already_ran("morning", today):
+    key = _scheduler_key(user)
+    if not force and task_already_ran("morning", today, tech_id=key):
         return False
-    if get_work_day(today, TECH_ID):
-        mark_task_ran("morning", today)
+    if get_work_day(today, key):
+        mark_task_ran("morning", today, tech_id=key)
         return False
 
     send_message(
         "🌅 <b>Доброе утро!</b>\n\n"
         "Работаешь сегодня?\n"
         "Нажми кнопку или отправь /on /off",
+        chat_id=user.chat_id,
         reply_markup=_workday_keyboard(),
     )
-    mark_task_ran("morning", today)
+    mark_task_ran("morning", today, tech_id=key)
     return True
 
 
-def run_evening_summary(force: bool = False) -> bool:
+def run_evening_summary_for(user: UserProfile, *, force: bool = False) -> bool:
     today = miami_now().date()
-    if not force and task_already_ran("evening", today):
+    uid = user.telegram_user_id
+    key = _scheduler_key(user)
+    if not force and task_already_ran("evening", today, tech_id=key):
         return False
 
-    status = get_work_day(today, TECH_ID)
-    day = today_totals(today)
+    status = get_work_day(today, key)
+    day = today_totals(uid, today)
     if status == "off" and day["job_count"] == 0:
-        mark_task_ran("evening", today)
+        mark_task_ran("evening", today, tech_id=key)
         return False
 
-    jobs = get_today_jobs(today)
-    lines = [
-        f"🌙 <b>Итог дня — {today.strftime('%d.%m.%Y')}</b>\n",
-    ]
+    jobs = get_today_jobs(uid, today)
+    lines = [f"🌙 <b>Итог дня — {today.strftime('%d.%m.%Y')}</b>\n"]
     if status == "working":
         lines.append("Статус: 🟢 рабочий день\n")
     elif status == "off":
@@ -98,24 +95,27 @@ def run_evening_summary(force: bool = False) -> bool:
             lines.append(f"  … и ещё {len(jobs) - 5}")
 
     week_start, _ = week_bounds(today)
-    week = week_totals(week_start)
-    work_days = count_work_days(week_start, today, TECH_ID)
+    week = week_totals(uid, week_start)
+    work_days = count_work_days(week_start, today, key)
     lines.append(f"\n📊 Неделя: {week['job_count']} работ, ${week['production']:,.2f}")
     lines.append(f"Чаевые за неделю: ${week.get('tips', 0):,.2f}")
     lines.append(f"Бензин за неделю: ${week.get('fuel', 0):,.2f}")
     if work_days:
         lines.append(f"Рабочих дней отмечено: {work_days}")
-    lines.append(_goal_progress_block())
+    goal_block = goals_progress_block(uid)
+    if goal_block:
+        lines.append(goal_block)
     lines.append("\n/today — проверить или исправить")
 
-    send_message("\n".join(lines))
-    mark_task_ran("evening", today)
+    send_message("\n".join(lines), chat_id=user.chat_id)
+    mark_task_ran("evening", today, tech_id=key)
     return True
 
 
-def run_monday_pdf(force: bool = False) -> bool:
+def run_monday_pdf_for(user: UserProfile, *, force: bool = False) -> bool:
     today = miami_now().date()
-    if not force and task_already_ran("monday_pdf", today):
+    key = _scheduler_key(user)
+    if not force and task_already_ran("monday_pdf", today, tech_id=key):
         return False
     if today.weekday() != 0 and not force:
         return False
@@ -123,16 +123,22 @@ def run_monday_pdf(force: bool = False) -> bool:
     from weekly_report import generate_weekly_report, previous_payroll_week
 
     week_start, week_end = previous_payroll_week(today)
-    result = generate_weekly_report(week_start=week_start, week_end=week_end)
+    result = generate_weekly_report(
+        week_start=week_start,
+        week_end=week_end,
+        tech_id=user.tech_id,
+        owner_telegram_id=user.telegram_user_id,
+    )
     caption = f"📋 WEEK {week_start} to {week_end}\nITG — расчётный лист ATN (понедельник)"
-    send_document(result["pdf"], caption)
-    mark_task_ran("monday_pdf", today)
+    send_document(result["pdf"], caption, chat_id=user.chat_id)
+    mark_task_ran("monday_pdf", today, tech_id=key)
     return True
 
 
-def run_weekly_backup(force: bool = False) -> bool:
+def run_weekly_backup_for(user: UserProfile, *, force: bool = False) -> bool:
     today = miami_now().date()
-    if not force and task_already_ran("weekly_backup", today):
+    key = _scheduler_key(user)
+    if not force and task_already_ran("weekly_backup", today, tech_id=key):
         return False
     if today.weekday() != 6 and not force:
         return False
@@ -140,11 +146,52 @@ def run_weekly_backup(force: bool = False) -> bool:
     from weekly_report import generate_weekly_report
 
     week_start, week_end = week_bounds(today)
-    result = generate_weekly_report(week_start=week_start, week_end=week_end)
+    result = generate_weekly_report(
+        week_start=week_start,
+        week_end=week_end,
+        tech_id=user.tech_id,
+        owner_telegram_id=user.telegram_user_id,
+    )
     caption = (
         f"💾 Бэкап недели {week_start} — {week_end}\n"
         "PDF копия данных (воскресный бэкап)"
     )
-    send_document(result["pdf"], caption)
-    mark_task_ran("weekly_backup", today)
+    send_document(result["pdf"], caption, chat_id=user.chat_id)
+    mark_task_ran("weekly_backup", today, tech_id=key)
     return True
+
+
+def run_morning_checkin(force: bool = False) -> bool:
+    ensure_legacy_migration()
+    ran = False
+    for user in list_active_users():
+        if run_morning_checkin_for(user, force=force):
+            ran = True
+    return ran
+
+
+def run_evening_summary(force: bool = False) -> bool:
+    ensure_legacy_migration()
+    ran = False
+    for user in list_active_users():
+        if run_evening_summary_for(user, force=force):
+            ran = True
+    return ran
+
+
+def run_monday_pdf(force: bool = False) -> bool:
+    ensure_legacy_migration()
+    ran = False
+    for user in list_active_users():
+        if run_monday_pdf_for(user, force=force):
+            ran = True
+    return ran
+
+
+def run_weekly_backup(force: bool = False) -> bool:
+    ensure_legacy_migration()
+    ran = False
+    for user in list_active_users():
+        if run_weekly_backup_for(user, force=force):
+            ran = True
+    return ran

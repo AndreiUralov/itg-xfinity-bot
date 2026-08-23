@@ -24,6 +24,7 @@ from datetime_miami import miami_now  # noqa: E402
 
 
 def main() -> None:
+    if "--force" in sys.argv:
         task = next((a for a in sys.argv[1:] if not a.startswith("-")), "")
         if task == "morning":
             run_morning_checkin(force=True)
