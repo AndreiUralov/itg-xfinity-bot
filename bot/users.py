@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from bot.config import DEFAULT_WORK_AREA, TECH_ID, TELEGRAM_ALLOWED_USER_IDS
+from bot.config import (
+    DEFAULT_WORK_AREA,
+    TECH_BINDINGS,
+    TECH_ID,
+    TELEGRAM_ADMIN_USER_IDS,
+    TELEGRAM_ALLOWED_USER_IDS,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 USERS_JSON = ROOT / "data" / "bot_users.json"
@@ -22,6 +28,28 @@ class UserNotLinkedError(Exception):
 
 class TechIdTakenError(Exception):
     """Raised when tech_id is already linked to another Telegram account."""
+
+
+class LinkNotAllowedError(Exception):
+    """Raised when user is not allowed to link this tech_id."""
+
+
+def is_admin(telegram_user_id: int) -> bool:
+    if telegram_user_id in TELEGRAM_ADMIN_USER_IDS:
+        return True
+    if TELEGRAM_ADMIN_USER_IDS:
+        return False
+    if len(TELEGRAM_ALLOWED_USER_IDS) == 1:
+        return telegram_user_id in TELEGRAM_ALLOWED_USER_IDS
+    if TELEGRAM_ALLOWED_USER_IDS:
+        return telegram_user_id == min(TELEGRAM_ALLOWED_USER_IDS)
+    return False
+
+
+def can_self_link(telegram_user_id: int, tech_id: str) -> bool:
+    tech = normalize_tech_id(tech_id)
+    allowed_uid = TECH_BINDINGS.get(tech)
+    return allowed_uid is not None and allowed_uid == telegram_user_id
 
 
 @dataclass
@@ -200,10 +228,20 @@ def link_user(
     chat_id: int,
     display_name: str = "",
     work_area: str | None = None,
+    by_admin: bool = False,
 ) -> UserProfile:
     tech = normalize_tech_id(tech_id)
     if not validate_tech_id(tech):
         raise ValueError("Неверный формат Tech ID (пример: I0KF)")
+
+    existing_user = get_user(telegram_user_id)
+    if existing_user and existing_user.tech_id != tech and not by_admin:
+        raise LinkNotAllowedError("Сменить Tech ID может только админ.")
+
+    if not by_admin and not can_self_link(telegram_user_id, tech):
+        raise LinkNotAllowedError(
+            "Этот Tech ID нельзя привязать самостоятельно. Попроси админа привязать аккаунт."
+        )
 
     existing_tech = get_user_by_tech(tech)
     if existing_tech and existing_tech.telegram_user_id != telegram_user_id:
@@ -291,6 +329,27 @@ def touch_chat(telegram_user_id: int, chat_id: int, *, display_name: str | None 
         _save_json_users(users)
 
 
+def unlink_user(telegram_user_id: int) -> bool:
+    if _db_enabled():
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE bot_users SET is_active = FALSE, updated_at = NOW() WHERE telegram_user_id = %s",
+                (telegram_user_id,),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    users = _load_json_users()
+    changed = False
+    for item in users:
+        if int(item["telegram_user_id"]) == telegram_user_id:
+            item["is_active"] = False
+            changed = True
+    if changed:
+        _save_json_users(users)
+    return changed
+
+
 def ensure_legacy_migration() -> None:
     """Auto-link the first allowed Telegram user to TECH_ID from env when no profiles exist."""
     if list_active_users():
@@ -313,4 +372,5 @@ def ensure_legacy_migration() -> None:
         tech_id=TECH_ID,
         chat_id=chat_id or telegram_id,
         display_name="Legacy user",
+        by_admin=True,
     )

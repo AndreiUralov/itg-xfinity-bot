@@ -22,6 +22,7 @@ from bot.config import (  # noqa: E402
     DEFAULT_WORK_AREA,
     PAY_DB_PATH,
     PHOTO_WAIT_SECONDS,
+    TECH_BINDINGS,
     TELEGRAM_ADMIN_USER_IDS,
     TELEGRAM_ALLOWED_USER_IDS,
 )
@@ -73,14 +74,17 @@ from bot.settings_store import (  # noqa: E402
 )
 from bot.storage import save_fuel, save_job, save_tip, week_bounds, week_totals  # noqa: E402
 from bot.users import (  # noqa: E402
+    LinkNotAllowedError,
     TechIdTakenError,
     UserProfile,
     ensure_legacy_migration,
     get_user,
+    is_admin,
     link_user,
     list_active_users,
     normalize_tech_id,
     touch_chat,
+    unlink_user,
     validate_tech_id,
 )
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
@@ -144,15 +148,22 @@ def _tech_id(context: ContextTypes.DEFAULT_TYPE) -> str:
 
 
 async def _prompt_link_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    context.user_data["step"] = "await_tech_id"
+    context.user_data.pop("step", None)
     target = update.message or (update.callback_query.message if update.callback_query else None)
     if not target:
         return
+    assigned = [tech for tech, uid in TECH_BINDINGS.items() if uid == _telegram_user_id(update)]
+    if assigned:
+        hint = (
+            f"Твой Tech ID: <code>{assigned[0]}</code>\n"
+            f"Команда: <code>/setup {assigned[0]}</code>"
+        )
+    else:
+        hint = "Попроси админа привязать аккаунт (ответом на твоё сообщение: <code>/bind I0KF</code>)"
     text = (
         "👋 <b>ITG Job Tracker</b>\n\n"
-        "Первый вход — укажи свой <b>Tech ID</b> из ATN\n"
-        "(например <code>I0KF</code>)\n\n"
-        "Или команда: <code>/setup I0KF</code>"
+        "Аккаунт ещё не привязан к Tech ID.\n"
+        f"{hint}"
     )
     if hasattr(target, "reply_text"):
         await target.reply_text(text, parse_mode="HTML")
@@ -174,13 +185,20 @@ async def _ensure_linked(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return None
 
 
-async def _complete_link(update: Update, context: ContextTypes.DEFAULT_TYPE, tech_id: str) -> bool:
+async def _complete_link(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    tech_id: str,
+    *,
+    by_admin: bool = False,
+) -> bool:
     try:
         profile = link_user(
             telegram_user_id=_telegram_user_id(update),
             tech_id=tech_id,
             chat_id=_chat_id(update),
             display_name=_display_name(update),
+            by_admin=by_admin,
         )
     except TechIdTakenError:
         target = update.message or update.callback_query.message
@@ -188,6 +206,10 @@ async def _complete_link(update: Update, context: ContextTypes.DEFAULT_TYPE, tec
             f"⚠️ Tech ID <b>{normalize_tech_id(tech_id)}</b> уже привязан к другому аккаунту.",
             parse_mode="HTML",
         )
+        return False
+    except LinkNotAllowedError as exc:
+        target = update.message or update.callback_query.message
+        await target.reply_text(f"⚠️ {exc}")
         return False
     except ValueError as exc:
         target = update.message or update.callback_query.message
@@ -416,13 +438,82 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"👤 <b>Профиль</b>\n"
                 f"Tech ID: <code>{profile.tech_id}</code>\n"
                 f"Имя: {profile.display_name or '—'}\n\n"
-                f"Сменить: <code>/setup НОВЫЙ_ID</code>",
+                f"Сменить ID может только админ.",
                 parse_mode="HTML",
             )
             return
         await _prompt_link_user(update, context)
         return
     await _complete_link(update, context, normalize_tech_id(args[0]))
+
+
+async def cmd_bind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_admin(_telegram_user_id(update)):
+        return await _deny(update)
+    args = (update.message.text or "").split()[1:]
+    if not args or not update.message.reply_to_message:
+        await update.message.reply_text(
+            "Ответь на сообщение техника и напиши:\n<code>/bind I0KF</code>",
+            parse_mode="HTML",
+        )
+        return
+    target = update.message.reply_to_message.from_user
+    if not target:
+        await update.message.reply_text("⚠️ Не удалось определить пользователя.")
+        return
+    tech_id = normalize_tech_id(args[0])
+    try:
+        profile = link_user(
+            telegram_user_id=target.id,
+            tech_id=tech_id,
+            chat_id=update.message.reply_to_message.chat_id,
+            display_name=target.first_name or target.username or "",
+            by_admin=True,
+        )
+    except TechIdTakenError:
+        await update.message.reply_text(
+            f"⚠️ Tech ID <b>{tech_id}</b> уже привязан к другому аккаунту.",
+            parse_mode="HTML",
+        )
+        return
+    except ValueError as exc:
+        await update.message.reply_text(f"⚠️ {exc}")
+        return
+    await update.message.reply_text(
+        f"✅ <b>{profile.tech_id}</b> привязан к {profile.display_name or target.id}",
+        parse_mode="HTML",
+    )
+
+
+async def cmd_unbind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_admin(_telegram_user_id(update)):
+        return await _deny(update)
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Ответь на сообщение техника: <code>/unbind</code>", parse_mode="HTML")
+        return
+    target = update.message.reply_to_message.from_user
+    if not target:
+        return
+    if unlink_user(target.id):
+        await update.message.reply_text(f"✅ Аккаунт {target.first_name or target.id} отвязан.")
+    else:
+        await update.message.reply_text("⚠️ У этого пользователя нет привязки.")
+
+
+async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_admin(_telegram_user_id(update)):
+        return await _deny(update)
+    users = list_active_users()
+    if not users:
+        await update.message.reply_text("Пока никто не привязан.")
+        return
+    lines = ["👥 <b>Привязанные техники</b>\n"]
+    for user in users:
+        lines.append(
+            f"• <code>{user.tech_id}</code> — {user.display_name or '—'} "
+            f"(tg: <code>{user.telegram_user_id}</code>)"
+        )
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 async def cmd_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -558,12 +649,12 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return await _deny(update)
     await update.message.reply_text(
         "📖 <b>Как пользоваться</b>\n\n"
-        "1. Привяжи Tech ID: <code>/setup I0KF</code>\n"
+        "1. Админ привязывает Tech ID (<code>/bind</code>) или ты в whitelist — <code>/setup I0KF</code>\n"
         "2. Сделай скрин(ы) работы в Tech360\n"
-        "2. Отправь в бот (альбомом или по одному)\n"
-        "3. Проверь данные → подтверди\n"
-        "4. Выбери оборудование (если нужно)\n"
-        "5. Работа сохранится для недельного инвойса ATN\n\n"
+        "3. Отправь в бот (альбомом или по одному)\n"
+        "4. Проверь данные → подтверди\n"
+        "5. Выбери оборудование (если нужно)\n"
+        "6. Работа сохранится для недельного инвойса ATN\n\n"
         "<b>Чаевые:</b> /tips или «💵 Чаевые» — не идут в план.\n"
         "<b>Бензин:</b> /fuel или «⛽ Бензин» — учёт расходов, не в план.\n\n"
         "<b>Быстрый ввод без скрина:</b>\n"
@@ -1117,7 +1208,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
     profile = get_user(query.from_user.id)
     if not profile:
-        await query.answer("Сначала привяжи Tech ID: /setup I0KF", show_alert=True)
+        await query.answer("Аккаунт не привязан. Попроси админа: /bind", show_alert=True)
         return
     touch_chat(profile.telegram_user_id, query.message.chat_id, display_name=_display_name(update))
     _remember_user(context, profile)
