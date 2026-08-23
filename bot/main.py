@@ -29,6 +29,7 @@ from bot.handlers import (
     cmd_invoice,
     cmd_off,
     cmd_on,
+    cmd_setup,
     cmd_start,
     cmd_tips,
     cmd_today,
@@ -37,6 +38,7 @@ from bot.handlers import (
     handle_photo,
     handle_text,
 )
+from bot.users import ensure_legacy_migration, ensure_users_schema
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -46,6 +48,7 @@ logger = logging.getLogger("itg.bot")
 
 BOT_COMMANDS = [
     BotCommand("start", "Сводка за день и неделю"),
+    BotCommand("setup", "Привязать Tech ID"),
     BotCommand("on", "На работе сегодня"),
     BotCommand("off", "Выходной сегодня"),
     BotCommand("goal", "Цель на день и неделю в $"),
@@ -63,6 +66,8 @@ ALLOWED_UPDATES = ["message", "callback_query"]
 
 async def _register_commands(application: Application) -> None:
     try:
+        ensure_users_schema()
+        ensure_legacy_migration()
         await application.bot.set_my_commands(BOT_COMMANDS)
         logger.info("Bot command menu registered")
     except Exception as exc:
@@ -114,6 +119,7 @@ def _build_application(*, webhook: bool) -> Application:
 
     app.add_handler(TypeHandler(Update, _maybe_run_scheduled_tasks), group=-1)
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("setup", cmd_setup))
     app.add_handler(CommandHandler("on", cmd_on))
     app.add_handler(CommandHandler("off", cmd_off))
     app.add_handler(CommandHandler("goal", cmd_goal))

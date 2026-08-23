@@ -12,7 +12,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 
-from bot.config import DEFAULT_WORK_AREA, JOB_LINES_CSV, TECH_ID
+from bot.config import DEFAULT_WORK_AREA, JOB_LINES_CSV
 from bot.line_types import (
     FUEL_JOB_CODE,
     FUEL_RULE_ID,
@@ -51,16 +51,18 @@ CSV_COLUMNS = [
 ]
 
 
-def _read_all_rows() -> list[dict[str, str]]:
+def _read_all_rows(tech_id: str | None = None) -> list[dict[str, str]]:
     if _use_db():
         from bot.db_store import read_all_rows as db_read
 
-        return db_read()
+        return db_read(tech_id)
     _ensure_csv()
     with JOB_LINES_CSV.open(encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
     for row in rows:
         row.setdefault("line_type", LINE_TYPE_PRODUCTION)
+    if tech_id:
+        rows = [r for r in rows if r.get("tech") == tech_id]
     return rows
 
 
@@ -99,6 +101,7 @@ def week_bounds(d: date) -> tuple[date, date]:
 
 def save_job(
     *,
+    tech_id: str,
     job_number: int | str,
     work_area: str,
     address: str,
@@ -125,7 +128,7 @@ def save_job(
                 "recorded_at": now.isoformat(),
                 "week_start": week_start.isoformat(),
                 "week_end": week_end.isoformat(),
-                "tech": row.get("tech", TECH_ID),
+                "tech": row.get("tech", tech_id),
                 "job_number": job_number,
                 "work_area": work_area,
                 "completion_date": completion_str,
@@ -157,7 +160,7 @@ def save_job(
     try:
         from bot.settings_store import set_work_day
 
-        set_work_day(completed.date(), TECH_ID, "working")
+        set_work_day(completed.date(), tech_id, "working")
     except Exception:
         pass
 
@@ -181,6 +184,7 @@ def save_job(
 
 def save_tip(
     *,
+    tech_id: str,
     amount: float,
     work_area: str | None = None,
     completion_datetime: datetime | None = None,
@@ -202,7 +206,7 @@ def save_tip(
         "recorded_at": now.isoformat(),
         "week_start": week_start.isoformat(),
         "week_end": week_end.isoformat(),
-        "tech": TECH_ID,
+        "tech": tech_id,
         "job_number": tip_ref,
         "work_area": area,
         "completion_date": completion_str,
@@ -242,6 +246,7 @@ def save_tip(
 
 def save_fuel(
     *,
+    tech_id: str,
     amount: float,
     work_area: str | None = None,
     completion_datetime: datetime | None = None,
@@ -263,7 +268,7 @@ def save_fuel(
         "recorded_at": now.isoformat(),
         "week_start": week_start.isoformat(),
         "week_end": week_end.isoformat(),
-        "tech": TECH_ID,
+        "tech": tech_id,
         "job_number": fuel_ref,
         "work_area": area,
         "completion_date": completion_str,
@@ -301,37 +306,37 @@ def save_fuel(
     return backup_path
 
 
-def load_week_lines(week_start: date, week_end: date) -> list[dict[str, str]]:
+def load_week_lines(week_start: date, week_end: date, tech_id: str | None = None) -> list[dict[str, str]]:
     if _use_db():
         from bot.db_store import load_week_lines as db_load_week
 
-        return db_load_week(week_start, week_end)
+        return db_load_week(week_start, week_end, tech_id)
     if not JOB_LINES_CSV.exists():
         return []
     rows: list[dict[str, str]] = []
     with JOB_LINES_CSV.open(encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f):
             ws = date.fromisoformat(row["week_start"][:10])
-            if ws == week_start:
+            if ws == week_start and (tech_id is None or row.get("tech") == tech_id):
                 rows.append(row)
     return rows
 
 
-def read_all_rows() -> list[dict[str, str]]:
-    return _read_all_rows()
+def read_all_rows(tech_id: str | None = None) -> list[dict[str, str]]:
+    return _read_all_rows(tech_id)
 
 
 def write_all_rows(rows: list[dict[str, str]]) -> None:
     _write_all_rows(rows)
 
 
-def week_totals(week_start: date | None = None) -> dict[str, Any]:
+def week_totals(tech_id: str, week_start: date | None = None) -> dict[str, Any]:
     if week_start is None:
         week_start, week_end = week_bounds(miami_now().date())
     else:
         week_end = week_start + timedelta(days=6)
 
-    lines = load_week_lines(week_start, week_end)
+    lines = load_week_lines(week_start, week_end, tech_id)
     production = sum_production(lines)
     tips = sum_tips(lines)
     fuel = sum_fuel(lines)

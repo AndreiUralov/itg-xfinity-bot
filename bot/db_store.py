@@ -46,15 +46,26 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, str]:
     return normalized
 
 
-def read_all_rows() -> list[dict[str, str]]:
+def read_all_rows(tech_id: str | None = None) -> list[dict[str, str]]:
     with _connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT {_SELECT_COLUMNS}
-            FROM job_lines
-            ORDER BY recorded_at, id
-            """
-        )
+        if tech_id:
+            cur.execute(
+                f"""
+                SELECT {_SELECT_COLUMNS}
+                FROM job_lines
+                WHERE tech = %s
+                ORDER BY recorded_at, id
+                """,
+                (tech_id,),
+            )
+        else:
+            cur.execute(
+                f"""
+                SELECT {_SELECT_COLUMNS}
+                FROM job_lines
+                ORDER BY recorded_at, id
+                """
+            )
         rows = cur.fetchall()
     return [_normalize_row(row) for row in rows]
 
@@ -102,16 +113,27 @@ def replace_all_rows(rows: list[dict[str, str]]) -> None:
         conn.commit()
 
 
-def load_week_lines(week_start: date, week_end: date) -> list[dict[str, str]]:
+def load_week_lines(week_start: date, week_end: date, tech_id: str | None = None) -> list[dict[str, str]]:
     with _connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT {_SELECT_COLUMNS}
-            FROM job_lines
-            WHERE week_start = %s
-            ORDER BY recorded_at, id
-            """,
-            (week_start,),
-        )
+        if tech_id:
+            cur.execute(
+                f"""
+                SELECT {_SELECT_COLUMNS}
+                FROM job_lines
+                WHERE week_start = %s AND tech = %s
+                ORDER BY recorded_at, id
+                """,
+                (week_start, tech_id),
+            )
+        else:
+            cur.execute(
+                f"""
+                SELECT {_SELECT_COLUMNS}
+                FROM job_lines
+                WHERE week_start = %s
+                ORDER BY recorded_at, id
+                """,
+                (week_start,),
+            )
         rows = cur.fetchall()
     return [_normalize_row(row) for row in rows]

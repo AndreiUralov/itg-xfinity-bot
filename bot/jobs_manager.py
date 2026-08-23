@@ -15,8 +15,8 @@ from bot.storage import read_all_rows, write_all_rows
 from datetime_miami import miami_now
 
 
-def _read_all_rows() -> list[dict[str, str]]:
-    return read_all_rows()
+def _read_all_rows(tech_id: str) -> list[dict[str, str]]:
+    return read_all_rows(tech_id)
 
 
 def _write_all_rows(rows: list[dict[str, str]]) -> None:
@@ -42,20 +42,20 @@ def _group_rows(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
     return grouped
 
 
-def get_today_tips(day: date | None = None) -> list[dict[str, str]]:
+def get_today_tips(tech_id: str, day: date | None = None) -> list[dict[str, str]]:
     target = day or miami_now().date()
-    return [r for r in _read_all_rows() if _row_day(r) == target and is_tip_line(r)]
+    return [r for r in _read_all_rows(tech_id) if _row_day(r) == target and is_tip_line(r)]
 
 
-def get_today_fuel(day: date | None = None) -> list[dict[str, str]]:
+def get_today_fuel(tech_id: str, day: date | None = None) -> list[dict[str, str]]:
     target = day or miami_now().date()
-    return [r for r in _read_all_rows() if _row_day(r) == target and is_fuel_line(r)]
+    return [r for r in _read_all_rows(tech_id) if _row_day(r) == target and is_fuel_line(r)]
 
 
-def get_today_jobs(day: date | None = None) -> list[dict[str, Any]]:
+def get_today_jobs(tech_id: str, day: date | None = None) -> list[dict[str, Any]]:
     """Return today's jobs grouped by job_number with totals (production lines only)."""
     target = day or miami_now().date()
-    all_rows = _read_all_rows()
+    all_rows = _read_all_rows(tech_id)
     today_rows = [r for r in all_rows if _row_day(r) == target and is_production_line(r)]
     grouped = _group_rows(today_rows)
 
@@ -86,10 +86,10 @@ def get_today_jobs(day: date | None = None) -> list[dict[str, Any]]:
     return jobs
 
 
-def today_totals(day: date | None = None) -> dict[str, Any]:
-    jobs = get_today_jobs(day)
-    tips = sum_tips(get_today_tips(day))
-    fuel = sum_fuel(get_today_fuel(day))
+def today_totals(tech_id: str, day: date | None = None) -> dict[str, Any]:
+    jobs = get_today_jobs(tech_id, day)
+    tips = sum_tips(get_today_tips(tech_id, day))
+    fuel = sum_fuel(get_today_fuel(tech_id, day))
     return {
         "job_count": len(jobs),
         "production": round(sum(j["total"] for j in jobs), 2),
@@ -98,21 +98,21 @@ def today_totals(day: date | None = None) -> dict[str, Any]:
     }
 
 
-def get_job(job_number: str | int, day: date | None = None) -> dict[str, Any] | None:
+def get_job(tech_id: str, job_number: str | int, day: date | None = None) -> dict[str, Any] | None:
     target = day or miami_now().date()
-    for job in get_today_jobs(target):
+    for job in get_today_jobs(tech_id, target):
         if str(job["job_number"]) == str(job_number):
             return job
     return None
 
 
-def find_existing_job(job_number: str | int) -> dict[str, Any] | None:
+def find_existing_job(tech_id: str, job_number: str | int) -> dict[str, Any] | None:
     """Return saved job summary if job_number already exists today or this week."""
     if not job_number:
         return None
 
     today = miami_now().date()
-    today_job = get_job(job_number, today)
+    today_job = get_job(tech_id, job_number, today)
     if today_job:
         return {**today_job, "scope": "today", "day": today.isoformat()}
 
@@ -121,7 +121,7 @@ def find_existing_job(job_number: str | int) -> dict[str, Any] | None:
     week_start, week_end = week_bounds(today)
     matching_rows = [
         r
-        for r in _read_all_rows()
+        for r in _read_all_rows(tech_id)
         if str(r["job_number"]) == str(job_number)
         and is_production_line(r)
         and week_start <= _row_day(r) <= week_end
@@ -154,15 +154,19 @@ def find_existing_job(job_number: str | int) -> dict[str, Any] | None:
     }
 
 
-def delete_job(job_number: str | int, day: date | None = None) -> tuple[bool, int]:
+def delete_job(tech_id: str, job_number: str | int, day: date | None = None) -> tuple[bool, int]:
     """Remove all CSV lines for job_number on the given day. Returns (ok, removed_count)."""
     target = day or miami_now().date()
-    all_rows = _read_all_rows()
+    all_rows = read_all_rows()
     kept: list[dict[str, str]] = []
     removed = 0
 
     for row in all_rows:
-        if str(row["job_number"]) == str(job_number) and _row_day(row) == target:
+        if (
+            row.get("tech") == tech_id
+            and str(row["job_number"]) == str(job_number)
+            and _row_day(row) == target
+        ):
             removed += 1
         else:
             kept.append(row)

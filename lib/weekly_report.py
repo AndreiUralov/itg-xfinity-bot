@@ -69,12 +69,12 @@ def current_payroll_week(reference: date | None = None) -> tuple[date, date]:
     return week_start, week_end
 
 
-def load_all_job_lines(directory: Path = JOB_LINES_DIR) -> list[InvoiceLine]:
+def load_all_job_lines(directory: Path = JOB_LINES_DIR, tech_id: str | None = None) -> list[InvoiceLine]:
     try:
         sys.path.insert(0, str(ROOT))
         from bot.storage import read_all_rows
 
-        rows = read_all_rows()
+        rows = read_all_rows(tech_id)
         if rows:
             return [_dict_to_line(row) for row in rows if not is_fuel_line(row)]
     except Exception:
@@ -82,7 +82,10 @@ def load_all_job_lines(directory: Path = JOB_LINES_DIR) -> list[InvoiceLine]:
 
     csv_path = directory / "jobs.csv"
     if csv_path.exists():
-        return load_lines_from_csv(csv_path)
+        lines = load_lines_from_csv(csv_path)
+        if tech_id:
+            lines = [line for line in lines if line.tech == tech_id]
+        return lines
 
     lines: list[InvoiceLine] = []
     if not directory.exists():
@@ -142,14 +145,14 @@ def generate_weekly_report(
         week_start, week_end = previous_payroll_week()
 
     if lines is None:
-        all_lines = load_all_job_lines()
+        all_lines = load_all_job_lines(tech_id=tech_id)
         lines = filter_lines_for_week(all_lines, week_start, week_end)
 
     fuel_total = 0.0
     try:
         from bot.storage import load_week_lines
 
-        fuel_total = sum_fuel(load_week_lines(week_start, week_end))
+        fuel_total = sum_fuel(load_week_lines(week_start, week_end, tech_id))
     except Exception:
         pass
 
@@ -169,7 +172,7 @@ def generate_weekly_report(
     generate_invoice_pdf(invoice, pdf_path)
     txt_path.write_text(invoice_to_text(invoice), encoding="utf-8")
 
-    summary_path = OUTPUT_DIR / f"summary_{week_start}_{week_end}.json"
+    summary_path = OUTPUT_DIR / f"summary_{tech_id}_{week_start}_{week_end}.json"
     summary_path.write_text(
         json.dumps(
             {

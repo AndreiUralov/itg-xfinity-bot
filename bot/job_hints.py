@@ -9,13 +9,13 @@ from bot.line_types import is_production_line
 from bot.storage import read_all_rows
 
 
-def lookup_job_hint(job_number: str | int) -> dict[str, Any] | None:
+def lookup_job_hint(job_number: str | int, tech_id: str | None = None) -> dict[str, Any] | None:
     """Return typical work type and amount for a job number from history."""
     jn = str(job_number).strip()
     if not jn:
         return None
 
-    rows = [r for r in read_all_rows() if str(r.get("job_number")) == jn]
+    rows = [r for r in read_all_rows(tech_id) if str(r.get("job_number")) == jn]
     if not rows:
         return None
 

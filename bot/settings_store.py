@@ -284,19 +284,21 @@ def set_weekly_goal_with_daily(week_start: date, tech: str, amount: float, *, wo
     return daily
 
 
-def task_already_ran(task_name: str, run_date: date) -> bool:
+def task_already_ran(task_name: str, run_date: date, *, tech_id: str | None = None) -> bool:
+    key = f"{task_name}:{tech_id}" if tech_id else task_name
     if db_enabled():
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT 1 FROM scheduler_runs WHERE task_name = %s AND run_date = %s",
-                (task_name, run_date),
+                (key, run_date),
             )
             return cur.fetchone() is not None
     data = _load_json()
-    return data.get("scheduler_runs", {}).get(f"{task_name}:{run_date.isoformat()}") is True
+    return data.get("scheduler_runs", {}).get(f"{key}:{run_date.isoformat()}") is True
 
 
-def mark_task_ran(task_name: str, run_date: date) -> None:
+def mark_task_ran(task_name: str, run_date: date, *, tech_id: str | None = None) -> None:
+    key = f"{task_name}:{tech_id}" if tech_id else task_name
     if db_enabled():
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -305,10 +307,10 @@ def mark_task_ran(task_name: str, run_date: date) -> None:
                 VALUES (%s, %s, NOW())
                 ON CONFLICT DO NOTHING
                 """,
-                (task_name, run_date),
+                (key, run_date),
             )
             conn.commit()
         return
     data = _load_json()
-    data.setdefault("scheduler_runs", {})[f"{task_name}:{run_date.isoformat()}"] = True
+    data.setdefault("scheduler_runs", {})[f"{key}:{run_date.isoformat()}"] = True
     _save_json(data)

@@ -22,8 +22,8 @@ from bot.config import (  # noqa: E402
     DEFAULT_WORK_AREA,
     PAY_DB_PATH,
     PHOTO_WAIT_SECONDS,
+    TELEGRAM_ADMIN_USER_IDS,
     TELEGRAM_ALLOWED_USER_IDS,
-    TECH_ID,
 )
 from bot.keyboards import (  # noqa: E402
     NEW_INSTALL_SUBTYPES,
@@ -67,12 +67,22 @@ from bot.settings_store import (  # noqa: E402
     get_goal_work_days,
     get_weekly_goal,
     get_work_day,
-    save_chat_id,
     set_daily_goal,
     set_weekly_goal_with_daily,
     set_work_day,
 )
 from bot.storage import save_fuel, save_job, save_tip, week_bounds, week_totals  # noqa: E402
+from bot.users import (  # noqa: E402
+    TechIdTakenError,
+    UserProfile,
+    ensure_legacy_migration,
+    get_user,
+    link_user,
+    list_active_users,
+    normalize_tech_id,
+    touch_chat,
+    validate_tech_id,
+)
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
 from datetime_miami import miami_now  # noqa: E402
 from work_area import is_confident, resolve_work_area  # noqa: E402
@@ -97,6 +107,102 @@ async def _deny(update: Update) -> None:
         await update.message.reply_text("⛔ Доступ запрещён.")
     elif update.callback_query:
         await update.callback_query.answer("Доступ запрещён", show_alert=True)
+
+
+def _display_name(update: Update) -> str:
+    user = update.effective_user
+    if not user:
+        return ""
+    parts = [user.first_name or "", user.last_name or ""]
+    name = " ".join(part for part in parts if part).strip()
+    return name or (user.username or "")
+
+
+def _telegram_user_id(update: Update) -> int:
+    user = update.effective_user
+    if not user:
+        return 0
+    return user.id
+
+
+def _chat_id(update: Update) -> int:
+    chat = update.effective_chat
+    if not chat:
+        return 0
+    return chat.id
+
+
+def _remember_user(context: ContextTypes.DEFAULT_TYPE, profile: UserProfile) -> None:
+    context.user_data["_tech_id"] = profile.tech_id
+
+
+def _tech_id(context: ContextTypes.DEFAULT_TYPE) -> str:
+    tech = context.user_data.get("_tech_id")
+    if not tech:
+        raise RuntimeError("tech_id missing from session")
+    return str(tech)
+
+
+async def _prompt_link_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data["step"] = "await_tech_id"
+    target = update.message or (update.callback_query.message if update.callback_query else None)
+    if not target:
+        return
+    text = (
+        "👋 <b>ITG Job Tracker</b>\n\n"
+        "Первый вход — укажи свой <b>Tech ID</b> из ATN\n"
+        "(например <code>I0KF</code>)\n\n"
+        "Или команда: <code>/setup I0KF</code>"
+    )
+    if hasattr(target, "reply_text"):
+        await target.reply_text(text, parse_mode="HTML")
+    else:
+        await target.edit_message_text(text, parse_mode="HTML")
+
+
+async def _ensure_linked(update: Update, context: ContextTypes.DEFAULT_TYPE) -> UserProfile | None:
+    if not _authorized(_telegram_user_id(update)):
+        await _deny(update)
+        return None
+    ensure_legacy_migration()
+    profile = get_user(_telegram_user_id(update))
+    if profile:
+        touch_chat(profile.telegram_user_id, _chat_id(update), display_name=_display_name(update))
+        _remember_user(context, profile)
+        return profile
+    await _prompt_link_user(update, context)
+    return None
+
+
+async def _complete_link(update: Update, context: ContextTypes.DEFAULT_TYPE, tech_id: str) -> bool:
+    try:
+        profile = link_user(
+            telegram_user_id=_telegram_user_id(update),
+            tech_id=tech_id,
+            chat_id=_chat_id(update),
+            display_name=_display_name(update),
+        )
+    except TechIdTakenError:
+        target = update.message or update.callback_query.message
+        await target.reply_text(
+            f"⚠️ Tech ID <b>{normalize_tech_id(tech_id)}</b> уже привязан к другому аккаунту.",
+            parse_mode="HTML",
+        )
+        return False
+    except ValueError as exc:
+        target = update.message or update.callback_query.message
+        await target.reply_text(f"⚠️ {exc}")
+        return False
+
+    context.user_data.pop("step", None)
+    _remember_user(context, profile)
+    target = update.message or update.callback_query.message
+    await target.reply_text(
+        f"✅ Привязано: <b>{profile.tech_id}</b>\n\n{_format_stats_block(profile.tech_id)}",
+        parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
+    )
+    return True
 
 
 def _reset_session(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -142,12 +248,18 @@ def _duplicate_notice(existing: dict[str, Any] | None) -> str:
     )
 
 
-def _format_preview(data: dict[str, Any], pay_result=None, *, existing: dict[str, Any] | None = None) -> str:
+def _format_preview(
+    data: dict[str, Any],
+    pay_result=None,
+    *,
+    existing: dict[str, Any] | None = None,
+    tech_id: str | None = None,
+) -> str:
     notice = _duplicate_notice(existing)
     hint_line = ""
     jn = data.get("job_number")
     if jn:
-        hint = lookup_job_hint(jn)
+        hint = lookup_job_hint(jn, tech_id)
         if hint:
             hint_line = format_job_hint(hint) + "\n\n"
     subtypes = ", ".join(data.get("subtype_codes") or []) or "—"
@@ -171,13 +283,13 @@ def _format_preview(data: dict[str, Any], pay_result=None, *, existing: dict[str
     return "\n".join(lines)
 
 
-def _existing_for_job(data: dict[str, Any]) -> dict[str, Any] | None:
+def _existing_for_job(data: dict[str, Any], tech_id: str) -> dict[str, Any] | None:
     if data.get("from_edit"):
         return None
     job_number = data.get("job_number")
     if not job_number:
         return None
-    return find_existing_job(job_number)
+    return find_existing_job(tech_id, job_number)
 
 
 def _preview_pay(data: dict, equipment: list[str] | None = None, product_code: str | None = None, addons: list[str] | None = None):
@@ -222,9 +334,9 @@ def _format_week_range(week_start: date, week_end: date) -> str:
     )
 
 
-def _workday_status_line() -> str:
+def _workday_status_line(tech_id: str) -> str:
     today = miami_now().date()
-    status = get_work_day(today, TECH_ID)
+    status = get_work_day(today, tech_id)
     date_label = today.strftime("%d.%m")
     if status == "working":
         return f"🟢 <b>На работе</b>  ·  {date_label}"
@@ -233,18 +345,18 @@ def _workday_status_line() -> str:
     return f"⚪ Статус не отмечен  ·  {date_label}"
 
 
-def _goal_progress_line() -> str:
-    return goals_progress_block()
+def _goal_progress_line(tech_id: str) -> str:
+    return goals_progress_block(tech_id)
 
 
-def _format_stats_block() -> str:
-    day = today_totals()
-    week = week_totals()
+def _format_stats_block(tech_id: str) -> str:
+    day = today_totals(tech_id)
+    week = week_totals(tech_id)
     today = miami_now().date()
-    work_days = count_work_days(week["week_start"], today, TECH_ID)
+    work_days = count_work_days(week["week_start"], today, tech_id)
     week_range = _format_week_range(week["week_start"], week["week_end"])
 
-    lines = [_workday_status_line(), ""]
+    lines = [_workday_status_line(tech_id), ""]
 
     lines.append(
         f"📈 <b>Сегодня</b>  ·  {day['job_count']} {_jobs_word(day['job_count'])}  ·  "
@@ -271,7 +383,7 @@ def _format_stats_block() -> str:
         f"   💵 ${week.get('tips', 0):,.2f}  ·  ⛽ ${week.get('fuel', 0):,.2f}"
     )
 
-    goal_block = _goal_progress_line()
+    goal_block = _goal_progress_line(tech_id)
     if goal_block:
         lines.append("")
         lines.append(goal_block)
@@ -279,37 +391,59 @@ def _format_stats_block() -> str:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
-        return await _deny(update)
-    save_chat_id(update.effective_chat.id)
+    profile = await _ensure_linked(update, context)
+    if not profile:
+        return
     _reset_session(context)
+    _remember_user(context, profile)
     await update.message.reply_text(
-        "👋 <b>ITG Job Tracker</b>\n\n"
-        f"{_format_stats_block()}",
+        f"👋 <b>ITG Job Tracker</b>\n"
+        f"<i>Tech ID: {profile.tech_id}</i>\n\n"
+        f"{_format_stats_block(profile.tech_id)}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
 
 
-async def cmd_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
+async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(_telegram_user_id(update)):
         return await _deny(update)
-    save_chat_id(update.effective_chat.id)
+    args = (update.message.text or "").split()[1:]
+    if not args:
+        profile = get_user(_telegram_user_id(update))
+        if profile:
+            await update.message.reply_text(
+                f"👤 <b>Профиль</b>\n"
+                f"Tech ID: <code>{profile.tech_id}</code>\n"
+                f"Имя: {profile.display_name or '—'}\n\n"
+                f"Сменить: <code>/setup НОВЫЙ_ID</code>",
+                parse_mode="HTML",
+            )
+            return
+        await _prompt_link_user(update, context)
+        return
+    await _complete_link(update, context, normalize_tech_id(args[0]))
+
+
+async def cmd_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    profile = await _ensure_linked(update, context)
+    if not profile:
+        return
     today = miami_now().date()
-    set_work_day(today, TECH_ID, "working")
+    set_work_day(today, profile.tech_id, "working")
     await update.message.reply_text(
         f"🟢 Отмечено: <b>на работе</b> ({today.strftime('%d.%m.%Y')})\n\n"
-        f"{_format_stats_block()}",
+        f"{_format_stats_block(profile.tech_id)}",
         parse_mode="HTML",
     )
 
 
 async def cmd_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
-        return await _deny(update)
-    save_chat_id(update.effective_chat.id)
+    profile = await _ensure_linked(update, context)
+    if not profile:
+        return
     today = miami_now().date()
-    set_work_day(today, TECH_ID, "off")
+    set_work_day(today, profile.tech_id, "off")
     await update.message.reply_text(
         f"🏖 Отмечено: <b>выходной</b> ({today.strftime('%d.%m.%Y')})",
         parse_mode="HTML",
@@ -317,17 +451,18 @@ async def cmd_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
-        return await _deny(update)
-    save_chat_id(update.effective_chat.id)
+    profile = await _ensure_linked(update, context)
+    if not profile:
+        return
+    tech_id = profile.tech_id
     today = miami_now().date()
     week_start, week_end = week_bounds(today)
     parts = (update.message.text or "").split()
     args = parts[1:]
 
     if not args:
-        week_goal = get_weekly_goal(week_start, TECH_ID)
-        day_goal = get_effective_daily_goal(week_start, TECH_ID)
+        week_goal = get_weekly_goal(week_start, tech_id)
+        day_goal = get_effective_daily_goal(week_start, tech_id)
         if not week_goal and not day_goal:
             await update.message.reply_text(
                 f"🎯 Цели не заданы.\n\n"
@@ -338,23 +473,23 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         lines = ["🎯 <b>Цели</b>\n"]
         if day_goal:
-            lines.append(daily_goal_progress_line())
+            lines.append(daily_goal_progress_line(tech_id))
         if week_goal:
-            lines.append(weekly_goal_progress_line())
+            lines.append(weekly_goal_progress_line(tech_id))
         lines.append("\nСбросить всё: <code>/goal off</code>")
         lines.append("Только день: <code>/goal day off</code>")
         await update.message.reply_text("\n".join(lines), parse_mode="HTML")
         return
 
     if args[0].lower() in ("off", "clear", "сброс", "0"):
-        clear_weekly_goal(week_start, TECH_ID)
-        clear_daily_goal(TECH_ID)
+        clear_weekly_goal(week_start, tech_id)
+        clear_daily_goal(tech_id)
         await update.message.reply_text("🎯 Недельная и дневная цели сброшены.")
         return
 
     if args[0].lower() in ("day", "день", "d"):
         if len(args) < 2:
-            day_goal = get_effective_daily_goal(week_start, TECH_ID)
+            day_goal = get_effective_daily_goal(week_start, tech_id)
             if not day_goal:
                 await update.message.reply_text(
                     "Дневная цель не задана.\nПример: <code>/goal day 351</code>",
@@ -362,12 +497,12 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
                 return
             await update.message.reply_text(
-                f"📍 Дневная цель: <b>${day_goal:,.2f}</b>\n{daily_goal_progress_line()}",
+                f"📍 Дневная цель: <b>${day_goal:,.2f}</b>\n{daily_goal_progress_line(tech_id)}",
                 parse_mode="HTML",
             )
             return
         if args[1].lower() in ("off", "clear", "сброс", "0"):
-            clear_daily_goal(TECH_ID)
+            clear_daily_goal(tech_id)
             await update.message.reply_text("📍 Дневная цель сброшена.")
             return
         try:
@@ -378,9 +513,9 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if amount <= 0:
             await update.message.reply_text("⚠️ Цель должна быть больше 0.")
             return
-        set_daily_goal(TECH_ID, amount)
+        set_daily_goal(tech_id, amount)
         await update.message.reply_text(
-            f"📍 Дневная цель: <b>${amount:,.2f}</b>\n{daily_goal_progress_line()}",
+            f"📍 Дневная цель: <b>${amount:,.2f}</b>\n{daily_goal_progress_line(tech_id)}",
             parse_mode="HTML",
         )
         return
@@ -405,15 +540,15 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except ValueError:
             pass
 
-    daily = set_weekly_goal_with_daily(week_start, TECH_ID, amount, work_days=work_days)
-    days = get_goal_work_days(TECH_ID)
-    week = week_totals(week_start)
+    daily = set_weekly_goal_with_daily(week_start, tech_id, amount, work_days=work_days)
+    days = get_goal_work_days(tech_id)
+    week = week_totals(tech_id, week_start)
     pct = min(100, round(week["production"] / amount * 100))
     await update.message.reply_text(
         f"🎯 Цель на неделю: <b>${amount:,.2f}</b>\n"
         f"📍 Дневная цель: <b>${daily:,.2f}</b> ({days} раб. дн.)\n"
         f"Уже за неделю: ${week['production']:,.2f} ({pct}%)\n"
-        f"{daily_goal_progress_line()}",
+        f"{daily_goal_progress_line(tech_id)}",
         parse_mode="HTML",
     )
 
@@ -423,7 +558,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return await _deny(update)
     await update.message.reply_text(
         "📖 <b>Как пользоваться</b>\n\n"
-        "1. Сделай скрин(ы) работы в Tech360\n"
+        "1. Привяжи Tech ID: <code>/setup I0KF</code>\n"
+        "2. Сделай скрин(ы) работы в Tech360\n"
         "2. Отправь в бот (альбомом или по одному)\n"
         "3. Проверь данные → подтверди\n"
         "4. Выбери оборудование (если нужно)\n"
@@ -455,17 +591,19 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
-        return await _deny(update)
+    profile = await _ensure_linked(update, context)
+    if not profile:
+        return
+    tech_id = profile.tech_id
     db = _get_db()
-    totals = week_totals()
+    totals = week_totals(tech_id)
     truck = db["deductions"]["truck"]["full_week"]
     meter = db["deductions"]["meter"]["per_week"]
     tips = totals.get("tips", 0.0)
     fuel = totals.get("fuel", 0.0)
     net = round(totals["production"] - truck - meter + tips - fuel, 2)
-    work_days = count_work_days(totals["week_start"], totals["week_end"], TECH_ID)
-    goal_line = goals_progress_block()
+    work_days = count_work_days(totals["week_start"], totals["week_end"], tech_id)
+    goal_line = goals_progress_block(tech_id)
     extra = f"\n{goal_line}" if goal_line else ""
     if work_days:
         extra += f"\nРабочих дней: {work_days}"
@@ -483,7 +621,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-def _format_today_list(jobs: list[dict]) -> str:
+def _format_today_list(jobs: list[dict], tech_id: str) -> str:
     today = miami_now().date()
     months = (
         "янв", "фев", "мар", "апр", "май", "июн",
@@ -494,8 +632,8 @@ def _format_today_list(jobs: list[dict]) -> str:
         return f"📋 <b>Сегодня ({date_label})</b>\n\nНет сохранённых работ."
 
     total = round(sum(j["total"] for j in jobs), 2)
-    tips_total = round(sum(float(r["item_total"]) for r in get_today_tips()), 2)
-    fuel_total = round(sum(float(r["item_total"]) for r in get_today_fuel()), 2)
+    tips_total = round(sum(float(r["item_total"]) for r in get_today_tips(tech_id)), 2)
+    fuel_total = round(sum(float(r["item_total"]) for r in get_today_fuel(tech_id)), 2)
     count = len(jobs)
     word = "работа" if count == 1 else ("работы" if 2 <= count <= 4 else "работ")
     header = f"📋 <b>Сегодня ({date_label})</b> — {count} {word}, <b>${total:.2f}</b>"
@@ -533,8 +671,8 @@ def _format_today_job(job: dict) -> str:
     return "\n".join(lines)
 
 
-def _tips_menu_text() -> str:
-    tips_today = get_today_tips()
+def _tips_menu_text(tech_id: str) -> str:
+    tips_today = get_today_tips(tech_id)
     total = round(sum(float(r["item_total"]) for r in tips_today), 2)
     count = len(tips_today)
     lines = [
@@ -548,8 +686,8 @@ def _tips_menu_text() -> str:
     return "\n".join(lines)
 
 
-async def _send_tips_menu(target, *, edit: bool = False) -> None:
-    text = _tips_menu_text()
+async def _send_tips_menu(target, tech_id: str, *, edit: bool = False) -> None:
+    text = _tips_menu_text(tech_id)
     markup = tips_keyboard()
     if edit and hasattr(target, "edit_message_text"):
         await target.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
@@ -558,15 +696,15 @@ async def _send_tips_menu(target, *, edit: bool = False) -> None:
 
 
 async def cmd_tips(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
-        return await _deny(update)
-    save_chat_id(update.effective_chat.id)
+    profile = await _ensure_linked(update, context)
+    if not profile:
+        return
     context.user_data["step"] = "pick_tip"
-    await _send_tips_menu(update.message)
+    await _send_tips_menu(update.message, profile.tech_id)
 
 
-def _fuel_menu_text() -> str:
-    fuel_today = get_today_fuel()
+def _fuel_menu_text(tech_id: str) -> str:
+    fuel_today = get_today_fuel(tech_id)
     total = round(sum(float(r["item_total"]) for r in fuel_today), 2)
     count = len(fuel_today)
     lines = [
@@ -580,8 +718,8 @@ def _fuel_menu_text() -> str:
     return "\n".join(lines)
 
 
-async def _send_fuel_menu(target, *, edit: bool = False) -> None:
-    text = _fuel_menu_text()
+async def _send_fuel_menu(target, tech_id: str, *, edit: bool = False) -> None:
+    text = _fuel_menu_text(tech_id)
     markup = fuel_keyboard()
     if edit and hasattr(target, "edit_message_text"):
         await target.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
@@ -590,16 +728,16 @@ async def _send_fuel_menu(target, *, edit: bool = False) -> None:
 
 
 async def cmd_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
-        return await _deny(update)
-    save_chat_id(update.effective_chat.id)
+    profile = await _ensure_linked(update, context)
+    if not profile:
+        return
     context.user_data["step"] = "pick_fuel"
-    await _send_fuel_menu(update.message)
+    await _send_fuel_menu(update.message, profile.tech_id)
 
 
-async def _send_today_list(target, *, edit: bool = False) -> None:
-    jobs = get_today_jobs()
-    text = _format_today_list(jobs)
+async def _send_today_list(target, tech_id: str, *, edit: bool = False) -> None:
+    jobs = get_today_jobs(tech_id)
+    text = _format_today_list(jobs, tech_id)
     markup = today_list_keyboard(jobs) if jobs else None
     if edit:
         await target.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
@@ -608,19 +746,21 @@ async def _send_today_list(target, *, edit: bool = False) -> None:
 
 
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
-        return await _deny(update)
-    await _send_today_list(update.message)
+    profile = await _ensure_linked(update, context)
+    if not profile:
+        return
+    await _send_today_list(update.message, profile.tech_id)
 
 
 async def cmd_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
-        return await _deny(update)
+    profile = await _ensure_linked(update, context)
+    if not profile:
+        return
     from weekly_report import current_payroll_week, generate_weekly_report
 
     week_start, week_end = current_payroll_week(datetime.now(TZ).date())
     try:
-        result = generate_weekly_report(week_start=week_start, week_end=week_end)
+        result = generate_weekly_report(week_start=week_start, week_end=week_end, tech_id=profile.tech_id)
     except Exception as exc:
         await update.message.reply_text(f"⚠️ Не удалось создать PDF: {exc}")
         return
@@ -648,8 +788,8 @@ async def _download_photos(context: ContextTypes.DEFAULT_TYPE, file_ids: list[st
     return paths
 
 
-def _apply_hint_to_extracted(extracted: dict[str, Any]) -> dict[str, Any]:
-    hint = lookup_job_hint(extracted.get("job_number", ""))
+def _apply_hint_to_extracted(extracted: dict[str, Any], tech_id: str) -> dict[str, Any]:
+    hint = lookup_job_hint(extracted.get("job_number", ""), tech_id)
     if not hint:
         return extracted
     if not extracted.get("work_type") and hint.get("work_type"):
@@ -664,14 +804,15 @@ def _apply_hint_to_extracted(extracted: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _start_quick_input(update: Update, context: ContextTypes.DEFAULT_TYPE, extracted: dict) -> None:
-    extracted = _apply_hint_to_extracted(extracted)
+    tech_id = _tech_id(context)
+    extracted = _apply_hint_to_extracted(extracted, tech_id)
     context.user_data["extracted"] = extracted
     context.user_data["equipment"] = []
     context.user_data["optional_addons"] = []
     context.user_data["product_code"] = None
 
     intro = f"⚡ Быстрый ввод Job# <code>{extracted['job_number']}</code>"
-    hint = lookup_job_hint(extracted["job_number"])
+    hint = lookup_job_hint(extracted["job_number"], tech_id)
     if hint:
         intro += f"\n{format_job_hint(hint)}"
 
@@ -694,7 +835,7 @@ async def _start_quick_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
     pay = _preview_pay(extracted)
     await update.message.reply_text(
         f"{intro}\n\n"
-        + _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
+        + _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
         parse_mode="HTML",
         reply_markup=_confirm_markup(extracted),
     )
@@ -734,7 +875,8 @@ async def _show_preview_or_ask_details(message_target, context, extracted: dict)
         _format_preview(
             extracted,
             pay if not pay.needs_user_input else None,
-            existing=_existing_for_job(extracted),
+            existing=_existing_for_job(extracted, _tech_id(context)),
+            tech_id=_tech_id(context),
         ),
         parse_mode="HTML",
         reply_markup=_confirm_markup(extracted),
@@ -742,11 +884,29 @@ async def _show_preview_or_ask_details(message_target, context, extracted: dict)
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
+    if not _authorized(_telegram_user_id(update)):
         return await _deny(update)
 
     step = context.user_data.get("step")
     text = (update.message.text or "").strip()
+
+    if step == "await_tech_id":
+        if not validate_tech_id(text):
+            await update.message.reply_text(
+                "⚠️ Неверный Tech ID. Пример: <code>I0KF</code>",
+                parse_mode="HTML",
+            )
+            return
+        await _complete_link(update, context, normalize_tech_id(text))
+        return
+
+    profile = get_user(_telegram_user_id(update))
+    if not profile:
+        await _prompt_link_user(update, context)
+        return
+    touch_chat(profile.telegram_user_id, _chat_id(update), display_name=_display_name(update))
+    _remember_user(context, profile)
+
     extracted: dict = context.user_data.get("extracted", empty_extraction())
 
     if step == "await_job_number":
@@ -764,7 +924,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted)
         await update.message.reply_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -780,7 +940,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted)
         await update.message.reply_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -869,7 +1029,7 @@ async def _process_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     pay = _preview_pay(extracted)
     await status_msg.edit_text(
-        _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
+        _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
         parse_mode="HTML",
         reply_markup=_confirm_markup(extracted),
     )
@@ -889,8 +1049,15 @@ async def _schedule_photo_wait(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
+    if not _authorized(_telegram_user_id(update)):
         return await _deny(update)
+
+    profile = get_user(_telegram_user_id(update))
+    if not profile:
+        await _prompt_link_user(update, context)
+        return
+    touch_chat(profile.telegram_user_id, _chat_id(update), display_name=_display_name(update))
+    _remember_user(context, profile)
 
     photo = update.message.photo[-1]
     file_id = photo.file_id
@@ -943,11 +1110,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
+    if not _authorized(_telegram_user_id(update)):
         return await _deny(update)
 
     query = update.callback_query
     await query.answer()
+    profile = get_user(query.from_user.id)
+    if not profile:
+        await query.answer("Сначала привяжи Tech ID: /setup I0KF", show_alert=True)
+        return
+    touch_chat(profile.telegram_user_id, query.message.chat_id, display_name=_display_name(update))
+    _remember_user(context, profile)
+    tech_id = profile.tech_id
+
     data = query.data or ""
     extracted: dict = context.user_data.get("extracted", empty_extraction())
     db = _get_db()
@@ -969,7 +1144,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         context.user_data["step"] = "confirm"
         await query.edit_message_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -998,19 +1173,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if data == "work:on":
-        save_chat_id(query.message.chat_id)
         today = miami_now().date()
-        set_work_day(today, TECH_ID, "working")
+        set_work_day(today, tech_id, "working")
         await query.edit_message_text(
-            f"🟢 <b>На работе</b> — {today.strftime('%d.%m.%Y')}\n\n{_format_stats_block()}",
+            f"🟢 <b>На работе</b> — {today.strftime('%d.%m.%Y')}\n\n{_format_stats_block(tech_id)}",
             parse_mode="HTML",
         )
         return
 
     if data == "work:off":
-        save_chat_id(query.message.chat_id)
         today = miami_now().date()
-        set_work_day(today, TECH_ID, "off")
+        set_work_day(today, tech_id, "off")
         await query.edit_message_text(
             f"🏖 <b>Выходной</b> — {today.strftime('%d.%m.%Y')}",
             parse_mode="HTML",
@@ -1039,7 +1212,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted, context.user_data.get("equipment"), context.user_data.get("product_code"), context.user_data.get("optional_addons"))
         await query.edit_message_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1056,7 +1229,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             context.user_data.get("optional_addons"),
         )
         await query.edit_message_text(
-            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
+            _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1135,7 +1308,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        existing = _existing_for_job(extracted)
+        existing = _existing_for_job(extracted, _tech_id(context))
         if existing and existing.get("scope") == "today" and not context.user_data.get("allow_duplicate"):
             context.user_data["pending_rule_id"] = rule["id"]
             await query.edit_message_text(
@@ -1153,7 +1326,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         action = data[5:]
         if action == "menu":
             context.user_data["step"] = "pick_tip"
-            await _send_tips_menu(query, edit=True)
+            await _send_tips_menu(query, tech_id, edit=True)
             return
         if action == "cancel":
             context.user_data.pop("step", None)
@@ -1178,7 +1351,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         action = data[5:]
         if action == "menu":
             context.user_data["step"] = "pick_fuel"
-            await _send_fuel_menu(query, edit=True)
+            await _send_fuel_menu(query, tech_id, edit=True)
             return
         if action == "cancel":
             context.user_data.pop("step", None)
@@ -1219,7 +1392,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         context.user_data["step"] = "confirm"
         await query.edit_message_text(
-            _format_preview(extracted, pay, existing=_existing_for_job(extracted)),
+            _format_preview(extracted, pay, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1259,7 +1432,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         pay = _preview_pay(extracted, [], context.user_data.get("product_code"), [])
         rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
         rule_id = rule["id"] if rule else "manual"
-        existing = _existing_for_job(extracted)
+        existing = _existing_for_job(extracted, _tech_id(context))
         if existing and existing.get("scope") == "today" and not context.user_data.get("allow_duplicate"):
             context.user_data["pending_rule_id"] = rule_id
             await query.edit_message_text(
@@ -1298,7 +1471,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
         rule_id = rule["id"] if rule else "manual"
-        existing = _existing_for_job(extracted)
+        existing = _existing_for_job(extracted, _tech_id(context))
         if existing and existing.get("scope") == "today" and not context.user_data.get("allow_duplicate"):
             context.user_data["pending_rule_id"] = rule_id
             await query.edit_message_text(
@@ -1312,12 +1485,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if data == "today:refresh" or data == "today:back":
-        await _send_today_list(query, edit=True)
+        await _send_today_list(query, tech_id, edit=True)
         return
 
     if data.startswith("today:view:"):
         job_number = data.split(":", 2)[2]
-        job = get_job(job_number)
+        job = get_job(tech_id, job_number)
         if not job:
             await query.edit_message_text("⚠️ Работа не найдена (возможно уже удалена).")
             return
@@ -1330,7 +1503,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("today:delete:"):
         job_number = data.split(":", 2)[2]
-        job = get_job(job_number)
+        job = get_job(tech_id, job_number)
         if not job:
             await query.edit_message_text("⚠️ Работа не найдена.")
             return
@@ -1346,7 +1519,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("today:delok:"):
         job_number = data.split(":", 2)[2]
-        ok, removed = delete_job(job_number)
+        ok, removed = delete_job(tech_id, job_number)
         if not ok:
             await query.edit_message_text("⚠️ Не удалось удалить — работа не найдена.")
             return
@@ -1359,11 +1532,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("today:edit:"):
         job_number = data.split(":", 2)[2]
-        job = get_job(job_number)
+        job = get_job(tech_id, job_number)
         if not job:
             await query.edit_message_text("⚠️ Работа не найдена.")
             return
-        delete_job(job_number)
+        delete_job(tech_id, job_number)
         _reset_session(context)
         extracted = job_to_session_data(job)
         context.user_data["extracted"] = extracted
@@ -1375,7 +1548,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(
             "✏️ <b>Пересчёт</b> — старая запись удалена.\n"
             "Проверь данные и подтверди заново:\n\n"
-            + _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted)),
+            + _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _tech_id(context)), tech_id=_tech_id(context)),
             parse_mode="HTML",
             reply_markup=_confirm_markup(extracted),
         )
@@ -1414,30 +1587,32 @@ async def _respond(target, text: str, **kwargs) -> None:
 
 
 async def _save_standalone_tip(target, context, tip_amount: float) -> None:
+    tech_id = _tech_id(context)
     try:
-        save_tip(amount=tip_amount)
+        save_tip(tech_id=tech_id, amount=tip_amount)
     except Exception as exc:
         await _respond(target, f"⚠️ Не удалось сохранить чаевые: {exc}")
         return
     context.user_data.pop("step", None)
     await _respond(
         target,
-        f"✅ <b>Чаевые ${tip_amount:.2f}</b> добавлены\n\n{_format_stats_block()}",
+        f"✅ <b>Чаевые ${tip_amount:.2f}</b> добавлены\n\n{_format_stats_block(tech_id)}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
 
 
 async def _save_standalone_fuel(target, context, fuel_amount: float) -> None:
+    tech_id = _tech_id(context)
     try:
-        save_fuel(amount=fuel_amount)
+        save_fuel(tech_id=tech_id, amount=fuel_amount)
     except Exception as exc:
         await _respond(target, f"⚠️ Не удалось сохранить бензин: {exc}")
         return
     context.user_data.pop("step", None)
     await _respond(
         target,
-        f"✅ <b>Бензин ${fuel_amount:.2f}</b> добавлен\n\n{_format_stats_block()}",
+        f"✅ <b>Бензин ${fuel_amount:.2f}</b> добавлен\n\n{_format_stats_block(tech_id)}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
@@ -1451,16 +1626,18 @@ async def _save_and_finish(target, context, extracted: dict, pay, rule_id: str) 
         await _respond(target, "⚠️ Нет адреса. Отправь скрин с адресом или /cancel.")
         return
 
+    tech_id = _tech_id(context)
     work_area = extracted.get("work_area") or DEFAULT_WORK_AREA
     today = miami_now()
     invoice_rows = pay.to_invoice_rows(
-        TECH_ID,
+        tech_id,
         work_area,
         extracted["address"].upper(),
         today.date(),
     )
 
     save_job(
+        tech_id=tech_id,
         job_number=extracted["job_number"],
         work_area=work_area,
         address=extracted["address"].upper(),
@@ -1479,7 +1656,7 @@ async def _save_and_finish(target, context, extracted: dict, pay, rule_id: str) 
         f"✅ <b>Сохранено — Job# {extracted['job_number']}</b>\n\n"
         f"{lines_text}\n"
         f"<b>За работу: ${pay.total:.2f}</b>\n\n"
-        f"{_format_stats_block()}",
+        f"{_format_stats_block(tech_id)}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
