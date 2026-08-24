@@ -42,6 +42,7 @@ from bot.keyboards import (  # noqa: E402
     today_delete_confirm_keyboard,
     today_job_keyboard,
     today_list_keyboard,
+    up_install_mode_keyboard,
     work_type_keyboard,
     workday_keyboard,
 )
@@ -250,7 +251,13 @@ def _existing_for_job(data: dict[str, Any], owner_telegram_id: int) -> dict[str,
     return find_existing_job(owner_telegram_id, job_number)
 
 
-def _preview_pay(data: dict, equipment: list[str] | None = None, product_code: str | None = None, addons: list[str] | None = None):
+def _preview_pay(
+    data: dict,
+    equipment: list[str] | None = None,
+    product_code: str | None = None,
+    addons: list[str] | None = None,
+    up_install_mode: str | None = None,
+):
     db = _get_db()
     return calculate_job(
         db,
@@ -260,7 +267,83 @@ def _preview_pay(data: dict, equipment: list[str] | None = None, product_code: s
         equipment=equipment,
         product_code=product_code,
         optional_addons=addons,
+        up_install_mode=up_install_mode,
     )
+
+
+def _pay_kwargs(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Any]:
+    return {
+        "equipment": context.user_data.get("equipment"),
+        "product_code": context.user_data.get("product_code"),
+        "addons": context.user_data.get("optional_addons"),
+        "up_install_mode": context.user_data.get("up_install_mode"),
+    }
+
+
+def _up_equipment_intro(summary: str) -> str:
+    return (
+        "🔧 <b>Service Change UP</b>\n"
+        "Что реально ставил / менял?\n"
+        "• Gateway — один раз\n"
+        "• Wired TV — один раз\n"
+        "• Wireless TV — жми несколько раз (3 коробки = 3 раза)\n\n"
+        f"{summary}"
+    )
+
+
+async def _prompt_up_base(message_target, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data["step"] = "up_base"
+    await message_target.edit_message_text(
+        "🔧 <b>Service Change UP</b>\n\n"
+        "Что делал с оборудованием?\n\n"
+        "🔄 <b>Swap</b> — заменил существующее (R.A.1. $17.85)\n"
+        "➕ <b>Добавил</b> — поставил новое к тому что уже было (R.M.1. $23.46)\n\n"
+        "После выбора укажешь конкретное оборудование.",
+        parse_mode="HTML",
+        reply_markup=up_install_mode_keyboard(),
+    )
+
+
+async def _prompt_up_equipment(message_target, context: ContextTypes.DEFAULT_TYPE, db: dict) -> None:
+    context.user_data["step"] = "equipment"
+    kb = equipment_keyboard(
+        db["equipment_prompt_buttons"],
+        context.user_data.get("equipment", []),
+        db.get("manual_addon_codes", []),
+        context.user_data.get("optional_addons", []),
+    )
+    summary = format_equipment_summary(
+        context.user_data.get("equipment", []),
+        db,
+        context.user_data.get("up_install_mode"),
+        for_up=True,
+    )
+    await message_target.edit_message_text(
+        _up_equipment_intro(summary),
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+async def _prompt_generic_equipment(message_target, context: ContextTypes.DEFAULT_TYPE, db: dict) -> None:
+    context.user_data["step"] = "equipment"
+    kb = equipment_keyboard(
+        db["equipment_prompt_buttons"],
+        context.user_data.get("equipment", []),
+        db.get("manual_addon_codes", []),
+        context.user_data.get("optional_addons", []),
+    )
+    summary = format_equipment_summary(context.user_data.get("equipment", []), db)
+    await message_target.edit_message_text(
+        f"🔧 Что ставил / менял?\n\n{summary}",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+def _equipment_step_is_up(context: ContextTypes.DEFAULT_TYPE, db: dict, extracted: dict) -> bool:
+    rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
+    return bool(rule and rule.get("up_base_prompt"))
 
 
 def _jobs_word(n: int) -> str:
@@ -824,6 +907,7 @@ async def _start_quick_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
     context.user_data["equipment"] = []
     context.user_data["optional_addons"] = []
     context.user_data["product_code"] = None
+    context.user_data.pop("up_install_mode", None)
 
     intro = f"⚡ Быстрый ввод Job# <code>{extracted['job_number']}</code>"
     hint = lookup_job_hint(extracted["job_number"], owner_telegram_id)
@@ -998,6 +1082,7 @@ async def _process_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["equipment"] = []
         context.user_data["optional_addons"] = []
         context.user_data["product_code"] = None
+        context.user_data.pop("up_install_mode", None)
         context.user_data["step"] = "manual_work_type"
         if str(exc) == NO_API_KEY_MSG:
             msg = (
@@ -1025,6 +1110,7 @@ async def _process_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     context.user_data["equipment"] = []
     context.user_data["optional_addons"] = []
     context.user_data["product_code"] = None
+    context.user_data.pop("up_install_mode", None)
     _resolve_work_area(extracted)
     context.user_data["step"] = "confirm"
 
@@ -1235,7 +1321,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data == "act:back_preview":
         context.user_data["step"] = "confirm"
-        pay = _preview_pay(extracted, context.user_data.get("equipment"), context.user_data.get("product_code"), context.user_data.get("optional_addons"))
+        context.user_data.pop("up_install_mode", None)
+        pay = _preview_pay(extracted, **_pay_kwargs(context))
         await query.edit_message_text(
             _format_preview(extracted, pay if not pay.needs_user_input else None, existing=_existing_for_job(extracted, _owner_id(context)), owner_telegram_id=_owner_id(context)),
             parse_mode="HTML",
@@ -1313,32 +1400,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text("Выбери product code:", reply_markup=product_keyboard(options))
             return
 
-        pay = _preview_pay(
-            extracted,
-            context.user_data.get("equipment"),
-            context.user_data.get("product_code"),
-            context.user_data.get("optional_addons"),
-        )
+        if rule.get("up_base_prompt") and not context.user_data.get("up_install_mode"):
+            await _prompt_up_base(query, context)
+            return
+
+        pay = _preview_pay(extracted, **_pay_kwargs(context))
+
+        if pay.needs_user_input == "up_base_prompt":
+            await _prompt_up_base(query, context)
+            return
 
         if pay.needs_user_input == "equipment_prompt":
-            context.user_data["step"] = "equipment"
-            kb = equipment_keyboard(
-                db["equipment_prompt_buttons"],
-                context.user_data.get("equipment", []),
-                db.get("manual_addon_codes", []),
-                context.user_data.get("optional_addons", []),
-            )
-            summary = format_equipment_summary(context.user_data.get("equipment", []), db)
-            await query.edit_message_text(
-                "🔧 <b>Service Change UP</b>\n"
-                "Что реально ставил / менял?\n"
-                "• Gateway — один раз\n"
-                "• Wired TV — один раз\n"
-                "• Wireless TV — жми несколько раз (3 коробки = 3 раза)\n\n"
-                f"{summary}",
-                parse_mode="HTML",
-                reply_markup=kb,
-            )
+            await _prompt_up_equipment(query, context, db)
             return
 
         existing = _existing_for_job(extracted, _owner_id(context))
@@ -1405,23 +1478,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _save_standalone_fuel(query, context, fuel_amount)
         return
 
+    if data.startswith("up:"):
+        mode = data[3:]
+        if mode not in ("swap", "add"):
+            await query.answer("Неизвестный режим", show_alert=True)
+            return
+        context.user_data["up_install_mode"] = mode
+        context.user_data["equipment"] = []
+        context.user_data["optional_addons"] = []
+        await _prompt_up_equipment(query, context, db)
+        return
+
     if data.startswith("prod:"):
         context.user_data["product_code"] = data[5:]
-        pay = _preview_pay(extracted, context.user_data.get("equipment"), context.user_data["product_code"], context.user_data.get("optional_addons"))
+        pay = _preview_pay(extracted, **_pay_kwargs(context))
         if pay.needs_user_input == "equipment_prompt":
-            context.user_data["step"] = "equipment"
-            kb = equipment_keyboard(
-                db["equipment_prompt_buttons"],
-                context.user_data.get("equipment", []),
-                db.get("manual_addon_codes", []),
-                context.user_data.get("optional_addons", []),
-            )
-            summary = format_equipment_summary(context.user_data.get("equipment", []), db)
-            await query.edit_message_text(
-                f"🔧 Что ставил / менял?\n\n{summary}",
-                parse_mode="HTML",
-                reply_markup=kb,
-            )
+            await _prompt_generic_equipment(query, context, db)
             return
         context.user_data["step"] = "confirm"
         await query.edit_message_text(
@@ -1449,11 +1521,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             db.get("manual_addon_codes", []),
             context.user_data.get("optional_addons", []),
         )
-        summary = format_equipment_summary(equipment, db)
+        is_up = _equipment_step_is_up(context, db, extracted)
+        summary = format_equipment_summary(
+            equipment,
+            db,
+            context.user_data.get("up_install_mode"),
+            for_up=is_up,
+        )
+        intro = _up_equipment_intro(summary) if is_up else f"🔧 Что ставил / менял?\n\n{summary}"
         await query.edit_message_text(
-            "🔧 <b>Service Change UP</b>\n"
-            "Что реально ставил / менял?\n\n"
-            f"{summary}",
+            intro,
             parse_mode="HTML",
             reply_markup=kb,
         )
@@ -1462,7 +1539,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "act:equip_none":
         context.user_data["equipment"] = []
         context.user_data["optional_addons"] = []
-        pay = _preview_pay(extracted, [], context.user_data.get("product_code"), [])
+        context.user_data["up_install_mode"] = "swap"
+        pay = _preview_pay(extracted, [], context.user_data.get("product_code"), [], up_install_mode="swap")
         rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
         rule_id = rule["id"] if rule else "manual"
         existing = _existing_for_job(extracted, _owner_id(context))
@@ -1496,12 +1574,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if data == "act:equip_done":
-        pay = _preview_pay(
-            extracted,
-            context.user_data.get("equipment"),
-            context.user_data.get("product_code"),
-            context.user_data.get("optional_addons"),
-        )
+        pay = _preview_pay(extracted, **_pay_kwargs(context))
         rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
         rule_id = rule["id"] if rule else "manual"
         existing = _existing_for_job(extracted, _owner_id(context))
@@ -1576,6 +1649,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["equipment"] = []
         context.user_data["optional_addons"] = []
         context.user_data["product_code"] = None
+        context.user_data.pop("up_install_mode", None)
         context.user_data["step"] = "confirm"
         pay = _preview_pay(extracted)
         await query.edit_message_text(

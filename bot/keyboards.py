@@ -162,6 +162,33 @@ def product_keyboard(options: list[dict[str, Any]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def up_install_mode_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🔄 Swap — замена текущего",
+                    callback_data="up:swap",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "➕ Добавил новое (к существующему)",
+                    callback_data="up:add",
+                )
+            ],
+            [InlineKeyboardButton("« Назад", callback_data="act:back_preview")],
+        ]
+    )
+
+
+def up_base_amount(db: dict, up_install_mode: str | None) -> tuple[str, float, str]:
+    code = "R.M.1." if up_install_mode == "add" else "R.A.1."
+    amount = _lookup_code_amount(code, db)
+    label = "add" if up_install_mode == "add" else "swap"
+    return code, amount, label
+
+
 def equipment_keyboard(
     buttons: list[dict[str, Any]],
     selected: list[str],
@@ -198,17 +225,52 @@ def equipment_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
-def format_equipment_summary(equipment: list[str], db: dict) -> str:
+def format_equipment_summary(
+    equipment: list[str],
+    db: dict,
+    up_install_mode: str | None = None,
+    *,
+    for_up: bool = False,
+) -> str:
     """Running total text for equipment selection step."""
     from collections import Counter
 
+    if not for_up:
+        if not equipment:
+            return "Укажи оборудование или «Ничего не менял»."
+        lines = ["<b>Выбрано:</b>"]
+        counts = Counter(equipment)
+        total = 0.0
+        code_labels = {b["code"]: b for b in db.get("equipment_prompt_buttons", [])}
+        for code, qty in counts.items():
+            btn = code_labels.get(code, {})
+            amount = _lookup_code_amount(code, db)
+            sub = amount * qty
+            total += sub
+            label = btn.get("label_short", code).split("+")[0].strip()
+            if qty > 1:
+                lines.append(f"  {label} ×{qty} → ${sub:.2f}")
+            else:
+                lines.append(f"  {label} → ${sub:.2f}")
+        lines.append(f"\n<b>Итого: ${total:.2f}</b>")
+        return "\n".join(lines)
+
+    base_code, base_amount, base_label = up_base_amount(db, up_install_mode)
+
     if not equipment:
-        return "Пока только база R.A.1. $17.85 (UP). Добавь оборудование или «Ничего не менял»."
+        if up_install_mode == "add":
+            hint = f"База {base_code} ${base_amount:.2f} (добавление). Укажи что ставил."
+        elif up_install_mode == "swap":
+            hint = f"База {base_code} ${base_amount:.2f} (swap). Укажи что менял или «Ничего не менял»."
+        else:
+            hint = "Сначала выбери swap или добавление нового."
+        return hint
 
     lines = ["<b>Выбрано:</b>"]
     counts = Counter(equipment)
-    total = 17.85  # R.A.1. base for UP
-    lines.append("  R.A.1. (база UP) → $17.85")
+    total = base_amount
+    mode_note = "swap" if base_label == "swap" else "добавление"
+    lines.append(f"  {base_code} (база UP, {mode_note}) → ${base_amount:.2f}")
 
     code_labels = {b["code"]: b for b in db.get("equipment_prompt_buttons", [])}
     for code, qty in counts.items():
