@@ -179,7 +179,7 @@ def calculate_job(
         amount, label = _code_amount(db, code)
         lines.append(PayLine(code=code, qty=1, amount=amount, label=label))
 
-    if rule.get("equipment_prompt"):
+    if rule.get("equipment_prompt") and product_code != "R.Q.4.":
         if not equipment:
             return JobPayResult(
                 job_number=job_number,

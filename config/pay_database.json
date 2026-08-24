@@ -233,7 +233,7 @@
       },
       {
         "key": "work_type",
-        "values": ["Trouble Call", "Service Change", "New Install", "Special Request", "Self Install"],
+        "values": ["Trouble Call", "Service Change", "New Install", "Special Request"],
         "required": true
       },
       {
@@ -342,6 +342,19 @@
       "example_jobs": [475937]
     },
     {
+      "id": "new_install_self",
+      "priority": 39,
+      "match": {
+        "work_type": "New Install"
+      },
+      "match_any_subtype": ["SELF INSTALL", "RQ4", "R.Q.4."],
+      "lines": [{ "code": "R.Q.4.", "qty": 1 }],
+      "user_prompt": null,
+      "confirmed": true,
+      "example_jobs": [480555],
+      "note": "New Install with Self Install code — R.Q.4. only, no equipment"
+    },
+    {
       "id": "new_install",
       "priority": 40,
       "match": {
@@ -350,6 +363,7 @@
       "subtype_hints": ["HSD NC", "HSD RC", "NC", "RC"],
       "product_prompt": {
         "options": [
+          { "code": "R.Q.4.", "label": "Self Install (R.Q.4.)" },
           { "code": "R.N.1.", "label": "1 Product — HSD (R.N.1.)", "default": true },
           { "code": "R.J.1.", "label": "2 Product — HSD/VID (R.J.1.)" },
           { "code": "R.F.1.", "label": "3 Product — CDV/HSD/VID (R.F.1.) ?" }
@@ -359,17 +373,6 @@
       "site_work_addon_prompt": true,
       "confirmed": true,
       "example_jobs": [492264, 511180, 467347]
-    },
-    {
-      "id": "self_install",
-      "priority": 50,
-      "match": {
-        "work_type": "Self Install"
-      },
-      "lines": [{ "code": "R.Q.4.", "qty": 1 }],
-      "user_prompt": null,
-      "confirmed": true,
-      "note": "Self Install — R.Q.4. per field guide and payroll"
     }
   ],
 
@@ -465,6 +468,13 @@
         { "code": "E.B.5.", "amount": 15.31 }
       ],
       "expected_total": 33.16
+    },
+    {
+      "job_number": 480555,
+      "work_type": "New Install",
+      "subtype": "Self Install",
+      "expected_lines": [{ "code": "R.Q.4.", "amount": 42.26 }],
+      "expected_total": 42.26
     },
     {
       "job_number": 492264,

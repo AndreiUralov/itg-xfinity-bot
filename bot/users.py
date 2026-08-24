@@ -290,8 +290,9 @@ def ensure_legacy_migration() -> None:
     )
 
     from bot.settings_store import migrate_legacy_settings_keys
-    from bot.storage import migrate_orphan_job_lines
+    from bot.storage import migrate_orphan_job_lines, migrate_self_install_work_types
 
     migrate_orphan_job_lines(telegram_id)
+    migrate_self_install_work_types()
     migrate_legacy_settings_keys(TECH_ID, user_settings_key(telegram_id))
 

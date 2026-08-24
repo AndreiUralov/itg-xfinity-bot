@@ -82,8 +82,8 @@ from bot.users import (  # noqa: E402
     user_settings_key,
     validate_tech_label,
 )
+from bot.work_types import normalize_extracted  # noqa: E402
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
-from datetime_miami import miami_now  # noqa: E402
 from work_area import is_confident, resolve_work_area  # noqa: E402
 from calculator import calculate_job, find_matching_rule, load_database  # noqa: E402
 
@@ -818,7 +818,7 @@ def _apply_hint_to_extracted(extracted: dict[str, Any], owner_telegram_id: int) 
 
 async def _start_quick_input(update: Update, context: ContextTypes.DEFAULT_TYPE, extracted: dict) -> None:
     owner_telegram_id = _owner_id(context)
-    extracted = _apply_hint_to_extracted(extracted, owner_telegram_id)
+    extracted = normalize_extracted(_apply_hint_to_extracted(extracted, owner_telegram_id))
     context.user_data["extracted"] = extracted
     context.user_data["equipment"] = []
     context.user_data["optional_addons"] = []
@@ -976,7 +976,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 return
         quick = parse_quick_input(text)
         if quick:
-            await _start_quick_input(update, context, {**empty_extraction(), **quick})
+            await _start_quick_input(update, context, normalize_extracted({**empty_extraction(), **quick}))
             return
 
 
@@ -990,7 +990,7 @@ async def _process_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     try:
         paths = await _download_photos(context, file_ids)
-        extracted = await extract_from_images(paths)
+        extracted = normalize_extracted(await extract_from_images(paths))
     except Exception as exc:
         extracted = empty_extraction()
         context.user_data["extracted"] = extracted
@@ -1261,8 +1261,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("wt:"):
         work_type = data[3:]
+        if work_type == "Self Install":
+            work_type = "New Install"
+            codes = extracted.get("subtype_codes") or []
+            if "Self Install" not in codes:
+                codes.append("Self Install")
+            extracted["subtype_codes"] = codes
         extracted["work_type"] = work_type
         extracted["subtype_codes"] = extracted.get("subtype_codes") or []
+        context.user_data["extracted"] = extracted
+        extracted = normalize_extracted(extracted)
         context.user_data["extracted"] = extracted
 
         if work_type == "Service Change" and not extracted["subtype_codes"]:
