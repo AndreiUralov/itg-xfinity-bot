@@ -7,7 +7,7 @@ import json
 import re
 import sys
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -33,6 +33,7 @@ from bot.keyboards import (  # noqa: E402
     equipment_keyboard,
     format_equipment_summary,
     fuel_keyboard,
+    invoice_week_keyboard,
     main_menu_keyboard,
     photo_actions_keyboard,
     product_keyboard,
@@ -290,6 +291,21 @@ def _format_week_range(week_start: date, week_end: date) -> str:
     )
 
 
+INVOICE_WEEK_LABELS = ("Текущая", "Прошлая", "Позапрошлая", "Позапозапрошлая")
+
+
+def _invoice_week_options(count: int = 4) -> list[tuple[str, date, date]]:
+    from weekly_report import current_payroll_week
+
+    today = miami_now().date()
+    options: list[tuple[str, date, date]] = []
+    for offset in range(count):
+        ref = today - timedelta(days=7 * offset)
+        week_start, week_end = current_payroll_week(ref)
+        options.append((INVOICE_WEEK_LABELS[offset], week_start, week_end))
+    return options
+
+
 def _workday_status_line(owner_telegram_id: int) -> str:
     today = miami_now().date()
     status = get_work_day(today, user_settings_key(owner_telegram_id))
@@ -534,7 +550,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<code>549110 trouble</code> · <code>508836 service</code>\n\n"
         "/on — на работе · /off — выходной\n"
         "/goal 1755 — цель на неделю (дневная авто)\n"
-        "/today — посмотреть сегодняшние работы, удалить или пересчитать при ошибке.\n\n"
+        "/today — посмотреть сегодняшние работы, удалить или пересчитать при ошибке.\n"
+        "/invoice — PDF за текущую или прошлые 3 недели.\n\n"
         "🌅 Утром (7:00) — напоминание отметить рабочий день.\n"
         "🌙 Вечером (21:00) — итог дня.\n"
         "📋 По понедельникам (7:00) — PDF за прошлую неделю.\n"
@@ -717,13 +734,16 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _send_today_list(update.message, profile.telegram_user_id)
 
 
-async def cmd_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_user(update, context)
-    if not profile:
-        return
-    from weekly_report import current_payroll_week, generate_weekly_report
+async def _send_invoice_pdf(
+    target,
+    *,
+    profile: UserProfile,
+    week_start: date,
+    week_end: date,
+    week_label: str,
+) -> None:
+    from weekly_report import generate_weekly_report
 
-    week_start, week_end = current_payroll_week(datetime.now(TZ).date())
     try:
         result = generate_weekly_report(
             week_start=week_start,
@@ -732,19 +752,42 @@ async def cmd_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             owner_telegram_id=profile.telegram_user_id,
         )
     except Exception as exc:
-        await update.message.reply_text(f"⚠️ Не удалось создать PDF: {exc}")
+        await target.reply_text(f"⚠️ Не удалось создать PDF: {exc}")
         return
 
     if not result["pdf"].exists():
-        await update.message.reply_text("Нет работ за эту неделю.")
+        await target.reply_text(
+            f"📋 За <b>{week_label.lower()}</b> неделю ({_format_week_range(week_start, week_end)}) работ нет.",
+            parse_mode="HTML",
+        )
         return
 
     with result["pdf"].open("rb") as doc:
-        await update.message.reply_document(
+        await target.reply_document(
             document=doc,
             filename=result["pdf"].name,
-            caption=f"📋 ITG — расчётный лист ATN\nWEEK {week_start} to {week_end}",
+            caption=(
+                f"📋 ITG — расчётный лист ATN\n"
+                f"{week_label} неделя · {week_start} — {week_end}"
+            ),
         )
+
+
+async def cmd_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    profile = await _ensure_user(update, context)
+    if not profile:
+        return
+
+    weeks = _invoice_week_options()
+    lines = ["📋 <b>Инвойс ATN</b> — выбери неделю:", ""]
+    for label, week_start, week_end in weeks:
+        lines.append(f"• <b>{label}</b> — {_format_week_range(week_start, week_end)}")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=invoice_week_keyboard(weeks),
+    )
 
 
 async def _download_photos(context: ContextTypes.DEFAULT_TYPE, file_ids: list[str]) -> list[Path]:
@@ -1078,6 +1121,35 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     data = query.data or ""
     extracted: dict = context.user_data.get("extracted", empty_extraction())
     db = _get_db()
+
+    if data.startswith("invoice:"):
+        action = data[8:]
+        if action == "cancel":
+            await query.edit_message_text("❌ Отменено.")
+            return
+        try:
+            offset = int(action)
+        except ValueError:
+            await query.answer("Неверный выбор", show_alert=True)
+            return
+        weeks = _invoice_week_options()
+        if offset < 0 or offset >= len(weeks):
+            await query.answer("Неверный выбор", show_alert=True)
+            return
+        week_label, week_start, week_end = weeks[offset]
+        await query.edit_message_text(
+            f"⏳ Генерирую PDF за <b>{week_label.lower()}</b> неделю "
+            f"({_format_week_range(week_start, week_end)})…",
+            parse_mode="HTML",
+        )
+        await _send_invoice_pdf(
+            query.message,
+            profile=profile,
+            week_start=week_start,
+            week_end=week_end,
+            week_label=week_label,
+        )
+        return
 
     if data == "act:cancel":
         _reset_session(context)
