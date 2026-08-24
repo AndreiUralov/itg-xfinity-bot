@@ -15,6 +15,7 @@
     "sources": [
       "M_I0KF_tech.pdf (week 2026-07-26 to 2026-08-01)",
       "M_I0KF_tech (1).pdf (week 2026-07-19 to 2026-07-25)",
+      "M_I0KF_tech_3.pdf (week 2026-08-02 to 2026-08-08)",
       "Tech360_Pay_Detailed_Color_Guide_v2.pdf",
       "Field notes — Codes for job & billing (legacy rates; invoice amounts override)"
     ]
@@ -144,11 +145,22 @@
       "amount": 17.85,
       "reference_amount": 16.56,
       "category": "service_change_up",
-      "label": "Service Change UP — base (HSD UP / VID UP)",
+      "label": "Service Change UP — swap only",
       "tech360_triggers": ["CAO complete as ordered", "VID UPGRADE", "HSD UP", "VID UP"],
       "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.4."],
       "confirmed": true,
-      "example_job": 498945
+      "example_job": 498945,
+      "note": "Swap/replace existing equipment — no additional units on top of what customer already has"
+    },
+    "R.M.1.": {
+      "amount": 23.46,
+      "category": "service_change_up",
+      "label": "Service Change UP — add equipment",
+      "tech360_triggers": ["HSD UP", "VID UP", "additional install"],
+      "pairs_with": ["E.C.5.", "E.B.5.", "E.B.6."],
+      "confirmed": true,
+      "example_job": 505358,
+      "note": "Installed new equipment in addition to customer's existing gear; always billed with E.C.5./E.B.5./E.B.6."
     },
     "R.N.1.": {
       "amount": 32.85,
@@ -299,7 +311,7 @@
         "work_type": "Service Change"
       },
       "match_any_subtype": ["HSD UP"],
-      "base_lines": [{ "code": "R.A.1.", "qty": 1 }],
+      "up_base_prompt": true,
       "equipment_prompt": true,
       "site_work_addon_prompt": true,
       "confirmed": true
@@ -311,7 +323,7 @@
         "work_type": "Service Change"
       },
       "match_any_subtype": ["VID UP"],
-      "base_lines": [{ "code": "R.A.1.", "qty": 1 }],
+      "up_base_prompt": true,
       "equipment_prompt": true,
       "site_work_addon_prompt": true,
       "confirmed": true,
@@ -462,12 +474,29 @@
       "job_number": 498945,
       "work_type": "Service Change",
       "subtype": "VID UP",
+      "up_install_mode": "swap",
       "equipment": ["E.B.5."],
       "expected_lines": [
         { "code": "R.A.1.", "amount": 17.85 },
         { "code": "E.B.5.", "amount": 15.31 }
       ],
       "expected_total": 33.16
+    },
+    {
+      "job_number": 505358,
+      "work_type": "Service Change",
+      "subtype": "VID UP",
+      "up_install_mode": "add",
+      "equipment": ["E.B.6.", "E.B.6.", "E.B.6.", "E.B.6.", "E.B.6."],
+      "expected_lines": [
+        { "code": "R.M.1.", "amount": 23.46 },
+        { "code": "E.B.6.", "amount": 9.39 },
+        { "code": "E.B.6.", "amount": 9.39 },
+        { "code": "E.B.6.", "amount": 9.39 },
+        { "code": "E.B.6.", "amount": 9.39 },
+        { "code": "E.B.6.", "amount": 9.39 }
+      ],
+      "expected_total": 70.41
     },
     {
       "job_number": 480555,
@@ -551,7 +580,10 @@
         "addons": ["R.R.1.", "R.R.2.", "R.R.4."]
       },
       "VID UPGRADE / Service Change UP": {
-        "base_code": "R.A.1.",
+        "base_codes": {
+          "swap": "R.A.1.",
+          "add": "R.M.1."
+        },
         "tech360_codes": ["CAO", "302", "262", "U44"],
         "equipment": ["E.C.5.", "E.B.5.", "E.B.6."],
         "addons": ["R.R.1.", "R.R.2.", "R.R.4."]
@@ -563,6 +595,7 @@
   },
 
   "open_questions": [
+    "Confirm R.M.1. applies to HSD UP the same way as VID UP (only seen on VID UP job 505358 so far)",
     "Confirm R.F.1. three-product amount on next payroll",
     "Confirm R.R.4. temporary drop appears on payroll",
     "R.T.6. vs R.T.7. — same work billed under different code?",

@@ -115,6 +115,11 @@ def _subtype_matches(rule: dict, subtypes: list[str]) -> bool:
     return True
 
 
+def up_base_code(install_mode: str | None) -> str:
+    """Service Change UP base: swap → R.A.1., add new on top → R.M.1."""
+    return "R.M.1." if install_mode == "add" else "R.A.1."
+
+
 def _build_lines(db: dict, line_defs: list[dict]) -> list[PayLine]:
     lines: list[PayLine] = []
     for item in line_defs:
@@ -147,6 +152,7 @@ def calculate_job(
     equipment: list[str] | None = None,
     product_code: str | None = None,
     optional_addons: list[str] | None = None,
+    up_install_mode: str | None = None,
 ) -> JobPayResult:
     rule = find_matching_rule(db, work_type, subtypes)
     if rule is None:
@@ -171,7 +177,19 @@ def calculate_job(
     if "lines" in rule:
         lines.extend(_build_lines(db, rule["lines"]))
 
-    if "base_lines" in rule:
+    if rule.get("up_base_prompt"):
+        if up_install_mode is None:
+            return JobPayResult(
+                job_number=job_number,
+                rule_id=rule_id,
+                lines=lines,
+                confirmed=False,
+                needs_user_input="up_base_prompt",
+            )
+        base = up_base_code(up_install_mode)
+        amount, label = _code_amount(db, base)
+        lines.append(PayLine(code=base, qty=1, amount=amount, label=label))
+    elif "base_lines" in rule:
         lines.extend(_build_lines(db, rule["base_lines"]))
 
     if rule.get("product_prompt"):
@@ -259,6 +277,7 @@ def validate_examples(db: dict | None = None) -> list[str]:
             equipment=example.get("equipment"),
             product_code=example.get("product_code"),
             optional_addons=example.get("optional_addons"),
+            up_install_mode=example.get("up_install_mode"),
         )
 
         if result.needs_user_input:
@@ -299,6 +318,7 @@ if __name__ == "__main__":
             job_number=498945,
             work_type="Service Change",
             subtypes=["VID UP"],
+            up_install_mode="swap",
             equipment=["E.B.5."],
         ),
     ]
