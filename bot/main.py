@@ -56,7 +56,7 @@ BOT_COMMANDS = [
     BotCommand("tips", "Добавить чаевые (не в план)"),
     BotCommand("fuel", "Затраты на бензин"),
     BotCommand("week", "Итог текущей недели"),
-    BotCommand("invoice", "PDF инвойс ATN"),
+    BotCommand("invoice", "PDF инвойс ATN — выбор недели"),
     BotCommand("cancel", "Отменить текущую работу"),
     BotCommand("help", "Как пользоваться ботом"),
 ]

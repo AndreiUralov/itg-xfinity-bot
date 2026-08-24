@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -80,6 +81,39 @@ def fuel_keyboard(*, show_cancel: bool = True) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("✏️ Другая сумма", callback_data="fuel:custom")])
     if show_cancel:
         rows.append([InlineKeyboardButton("❌ Отмена", callback_data="fuel:cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _short_month(day: date) -> str:
+    months = (
+        "янв", "фев", "мар", "апр", "май", "июн",
+        "июл", "авг", "сен", "окт", "ноя", "дек",
+    )
+    return months[day.month - 1]
+
+
+def _invoice_week_button_range(week_start: date, week_end: date) -> str:
+    if week_start.month == week_end.month:
+        return f"{week_start.day}–{week_end.day} {_short_month(week_start)}"
+    return (
+        f"{week_start.day} {_short_month(week_start)} – "
+        f"{week_end.day} {_short_month(week_end)}"
+    )
+
+
+def invoice_week_keyboard(weeks: list[tuple[str, date, date]]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for index, (label, week_start, week_end) in enumerate(weeks):
+        date_range = _invoice_week_button_range(week_start, week_end)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"{label} · {date_range}",
+                    callback_data=f"invoice:{index}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton("❌ Отмена", callback_data="invoice:cancel")])
     return InlineKeyboardMarkup(rows)
 
 
