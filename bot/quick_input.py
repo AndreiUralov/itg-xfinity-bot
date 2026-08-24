@@ -17,13 +17,15 @@ WORK_TYPE_ALIASES: dict[str, str] = {
     "install": "New Install",
     "new install": "New Install",
     "ni": "New Install",
-    "self": "Self Install",
-    "self install": "Self Install",
-    "si": "Self Install",
+    "self": "New Install",
+    "self install": "New Install",
+    "si": "New Install",
     "special": "Special Request",
     "special request": "Special Request",
     "sr": "Special Request",
 }
+
+SELF_INSTALL_ALIASES = frozenset({"self", "self install", "si"})
 
 HOOKUP_ALIASES = {
     "aerial": "Aerial",
@@ -63,6 +65,10 @@ def parse_quick_input(text: str) -> dict[str, Any] | None:
     for alias in sorted(WORK_TYPE_ALIASES, key=len, reverse=True):
         if rest == alias or rest.startswith(alias + " "):
             result["work_type"] = WORK_TYPE_ALIASES[alias]
+            if alias in SELF_INSTALL_ALIASES:
+                codes = result.setdefault("subtype_codes", [])
+                if "Self Install" not in codes:
+                    codes.append("Self Install")
             rest = rest[len(alias) :].strip()
             break
 
@@ -79,6 +85,10 @@ def parse_quick_input(text: str) -> dict[str, Any] | None:
         for alias, work_type in WORK_TYPE_ALIASES.items():
             if alias in rest:
                 result["work_type"] = work_type
+                if alias in SELF_INSTALL_ALIASES:
+                    codes = result.setdefault("subtype_codes", [])
+                    if "Self Install" not in codes:
+                        codes.append("Self Install")
                 break
 
     return result
