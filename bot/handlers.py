@@ -84,6 +84,7 @@ from bot.users import (  # noqa: E402
 )
 from bot.work_types import normalize_extracted  # noqa: E402
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
+from datetime_miami import miami_now  # noqa: E402
 from work_area import is_confident, resolve_work_area  # noqa: E402
 from calculator import calculate_job, find_matching_rule, load_database  # noqa: E402
 
