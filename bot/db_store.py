@@ -63,6 +63,28 @@ def migrate_orphan_job_lines(owner_telegram_id: int) -> int:
     return updated
 
 
+def migrate_self_install_work_types() -> int:
+    """Fix legacy rows saved with work_type=Self Install → New Install + subtype."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE job_lines
+            SET
+                work_type = 'New Install',
+                subtype_codes = CASE
+                    WHEN COALESCE(TRIM(subtype_codes), '') = '' THEN 'Self Install'
+                    WHEN subtype_codes ILIKE '%self install%' THEN subtype_codes
+                    ELSE subtype_codes || '; Self Install'
+                END,
+                rule_id = CASE WHEN rule_id = 'self_install' THEN 'new_install_self' ELSE rule_id END
+            WHERE work_type = 'Self Install'
+            """
+        )
+        updated = cur.rowcount
+        conn.commit()
+    return updated
+
+
 def read_all_rows(owner_telegram_id: int | None = None) -> list[dict[str, str]]:
     with _connect() as conn, conn.cursor() as cur:
         if owner_telegram_id is not None:

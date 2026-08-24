@@ -344,6 +344,37 @@ def read_all_rows(owner_telegram_id: int | None = None) -> list[dict[str, str]]:
     return _read_all_rows(owner_telegram_id)
 
 
+def fix_self_install_row(row: dict[str, str]) -> bool:
+    """Normalize legacy Self Install work_type on a stored job line row."""
+    if (row.get("work_type") or "").strip() != "Self Install":
+        return False
+    row["work_type"] = "New Install"
+    subtypes = (row.get("subtype_codes") or "").strip()
+    if not subtypes:
+        row["subtype_codes"] = "Self Install"
+    elif "self install" not in subtypes.lower():
+        row["subtype_codes"] = f"{subtypes}; Self Install"
+    if row.get("rule_id") == "self_install":
+        row["rule_id"] = "new_install_self"
+    return True
+
+
+def migrate_self_install_work_types() -> int:
+    """Fix legacy rows saved with work_type=Self Install."""
+    if _use_db():
+        from bot.db_store import migrate_self_install_work_types as db_migrate
+
+        return db_migrate()
+
+    _ensure_csv()
+    with JOB_LINES_CSV.open(encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    updated = sum(1 for row in rows if fix_self_install_row(row))
+    if updated:
+        _write_all_rows(rows)
+    return updated
+
+
 def migrate_orphan_job_lines(owner_telegram_id: int) -> int:
     """Assign rows without owner to the legacy user. Returns count updated."""
     if _use_db():
