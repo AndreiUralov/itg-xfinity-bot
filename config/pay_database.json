@@ -71,6 +71,15 @@
       "confirmed": true,
       "example_job": 492449
     },
+    "R.T.9.": {
+      "amount": 36.0,
+      "category": "repair",
+      "label": "Special Request — INSIDE INGRESS-CF",
+      "tech360_triggers": ["INSIDE INGRESS", "INSIDE INGRESS-CF", "75:INSIDE INGRESS"],
+      "confirmed": false,
+      "example_job": 575865,
+      "note": "New SR type — payroll code unconfirmed; $36 from field"
+    },
     "R.T.6.": {
       "amount": 26.15,
       "category": "repair",
@@ -354,6 +363,18 @@
       "example_jobs": [475937]
     },
     {
+      "id": "special_request_inside_ingress",
+      "priority": 32,
+      "match": {
+        "work_type": "Special Request"
+      },
+      "match_any_subtype": ["INSIDE INGRESS", "INSIDE INGRESS-CF", "75:INSIDE INGRESS"],
+      "lines": [{ "code": "R.T.9.", "qty": 1 }],
+      "user_prompt": null,
+      "confirmed": false,
+      "example_jobs": [575865]
+    },
+    {
       "id": "new_install_self",
       "priority": 39,
       "match": {
@@ -558,6 +579,13 @@
       "subtype": "PROACTIVE XIT-CF",
       "expected_lines": [{ "code": "R.T.7.", "amount": 37.57 }],
       "expected_total": 37.57
+    },
+    {
+      "job_number": 575865,
+      "work_type": "Special Request",
+      "subtype": "INSIDE INGRESS-CF",
+      "expected_lines": [{ "code": "R.T.9.", "amount": 36.0 }],
+      "expected_total": 36.0
     }
   ],
 
@@ -589,7 +617,11 @@
         "addons": ["R.R.1.", "R.R.2.", "R.R.4."]
       },
       "Special Request": {
-        "codes": ["R.T.17. Miscellaneous SRO", "R.T.7. Proactive (payroll) / R.T.6. (field guide)"]
+        "codes": [
+          "R.T.17. Miscellaneous SRO",
+          "R.T.7. Proactive (payroll) / R.T.6. (field guide)",
+          "R.T.9. Inside Ingress (payroll code unconfirmed — $36)"
+        ]
       }
     }
   },
