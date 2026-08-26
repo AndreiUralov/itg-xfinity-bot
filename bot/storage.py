@@ -199,8 +199,8 @@ def save_tip(
 ) -> Path:
     """Save a standalone cash tip (not linked to any job)."""
     tip_value = round(float(amount), 2)
-    if tip_value <= 0:
-        raise ValueError("Tip amount must be greater than zero")
+    if tip_value == 0:
+        raise ValueError("Tip amount cannot be zero")
 
     now = miami_now()
     completed = completion_datetime or now

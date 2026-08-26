@@ -1032,9 +1032,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if step == "await_standalone_tip" or step == "pick_tip":
-        tip_amount = _parse_tip_amount(text)
+        tip_amount = _parse_tip_amount(text, allow_negative=True)
         if tip_amount is None:
-            await update.message.reply_text("⚠️ Введи сумму числом, напр. <code>10</code> или <code>12.50</code>", parse_mode="HTML")
+            await update.message.reply_text(
+                "⚠️ Введи сумму числом, напр. <code>10</code>, <code>12.50</code> или <code>-20</code> для исправления",
+                parse_mode="HTML",
+            )
             return
         await _save_standalone_tip(update.message, context, tip_amount)
         return
@@ -1055,7 +1058,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await cmd_fuel(update, context)
             return
         if _should_accept_standalone_tip_text(text):
-            tip_amount = _parse_tip_amount(text)
+            tip_amount = _parse_tip_amount(text, allow_negative=True)
             if tip_amount is not None:
                 await _save_standalone_tip(update.message, context, tip_amount)
                 return
@@ -1442,11 +1445,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             context.user_data["step"] = "await_standalone_tip"
             await query.answer()
             await query.message.reply_text(
-                "💵 Введи сумму чаевых ($), напр. <code>10</code> или <code>12.50</code>",
+                "💵 Введи сумму чаевых ($), напр. <code>10</code>, <code>12.50</code> или <code>-20</code> чтобы вычесть",
                 parse_mode="HTML",
             )
             return
-        tip_amount = _parse_tip_amount(action)
+        tip_amount = _parse_tip_amount(action, allow_negative=True)
         if tip_amount is None:
             await query.answer("Неверная сумма", show_alert=True)
             return
@@ -1662,7 +1665,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
 
-def _parse_tip_amount(text: str) -> float | None:
+def _parse_tip_amount(text: str, *, allow_negative: bool = False) -> float | None:
     cleaned = text.strip().replace("$", "").replace(",", ".")
     if not cleaned:
         return None
@@ -1670,7 +1673,11 @@ def _parse_tip_amount(text: str) -> float | None:
         amount = round(float(cleaned), 2)
     except ValueError:
         return None
-    if amount <= 0 or amount > 9999:
+    if amount == 0:
+        return None
+    if not allow_negative and amount < 0:
+        return None
+    if abs(amount) > 9999:
         return None
     return amount
 
@@ -1678,12 +1685,12 @@ def _parse_tip_amount(text: str) -> float | None:
 def _should_accept_standalone_tip_text(text: str) -> bool:
     """Accept plain tip amounts even if session step was lost (/start, bot restart)."""
     cleaned = text.strip().replace("$", "").replace(",", ".")
-    if not cleaned or not re.fullmatch(r"\d+(?:\.\d{1,2})?", cleaned):
+    if not cleaned or not re.fullmatch(r"-?\d+(?:\.\d{1,2})?", cleaned):
         return False
     # Leave 5–7 digit numbers for quick job entry (549110 trouble).
     if re.fullmatch(r"\d{5,7}", cleaned):
         return False
-    return _parse_tip_amount(text) is not None
+    return _parse_tip_amount(text, allow_negative=True) is not None
 
 
 async def _respond(target, text: str, **kwargs) -> None:
@@ -1701,9 +1708,13 @@ async def _save_standalone_tip(target, context, tip_amount: float) -> None:
         await _respond(target, f"⚠️ Не удалось сохранить чаевые: {exc}")
         return
     context.user_data.pop("step", None)
+    if tip_amount < 0:
+        saved_line = f"✅ <b>Корректировка чаевых ${tip_amount:.2f}</b>"
+    else:
+        saved_line = f"✅ <b>Чаевые ${tip_amount:.2f}</b> добавлены"
     await _respond(
         target,
-        f"✅ <b>Чаевые ${tip_amount:.2f}</b> добавлены\n\n{_format_stats_block(owner_telegram_id)}",
+        f"{saved_line}\n\n{_format_stats_block(owner_telegram_id)}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
