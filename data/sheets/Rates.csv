@@ -3,7 +3,7 @@ R.T.8.,repair,39.91,37.35,Trouble Call (standard),Trouble Call — станда�
 R.T.7.,repair,37.57,26.15,Special Request PROACTIVE,Special Request PROACTIVE,TRUE,auto,Field guide R.T.6. may be legacy
 R.T.17.,repair,21.11,19.61,Special Request GENESIS,Special Request GENESIS,TRUE,auto,G9:GENESIS / SRO-CF
 R.T.9.,repair,36.00,,Special Request INSIDE INGRESS,Special Request INSIDE INGRESS,FALSE,auto,75:INSIDE INGRESS / INSIDE INGRESS-CF
-R.Q.2.,service_change,52.83,52.73,Service Change TECH RECOVERY,Service Change TECH RECOVERY,TRUE,auto,FS3 + optional site work addons
+R.Q.2.,service_change,52.83,52.73,Service Change TECH RECOVERY,Service Change TECH RECOVERY,TRUE,auto,TECH RECOVERY / FDX TECH RCVRY / DF:CHNL-CARE
 R.Q.4.,self_install,42.26,40.00,Self Install,Self Install,TRUE,auto,Field guide RQ4
 R.A.1.,service_change_up,17.85,16.56,Service Change UP swap,Service Change UP — swap,TRUE,auto,HSD UP / VID UP — replace only
 R.M.1.,service_change_up,23.46,,Service Change UP add,Service Change UP — добавление,TRUE,auto,Additional equipment on top of existing

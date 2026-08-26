@@ -93,7 +93,7 @@
       "reference_amount": 52.73,
       "category": "service_change",
       "label": "Service Change — TECH RECOVERY",
-      "tech360_triggers": ["FS3 inactive outlet", "TECH RECOVERY"],
+      "tech360_triggers": ["FS3 inactive outlet", "TECH RECOVERY", "TECH RCVRY", "FDX TECH RCVRY", "DF:CHNL-CARE"],
       "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.4."],
       "confirmed": true,
       "example_jobs": [497745, 510236, 501573, 444856, 502129]
@@ -306,12 +306,12 @@
       "match": {
         "work_type": "Service Change"
       },
-      "match_all_subtype": ["TECH RECOVERY"],
+      "match_any_subtype": ["TECH RECOVERY", "TECH RCVRY", "FDX TECH RCVRY"],
       "lines": [{ "code": "R.Q.2.", "qty": 1 }],
       "site_work_addon_prompt": true,
       "user_prompt": null,
       "confirmed": true,
-      "example_jobs": [497745, 510236]
+      "example_jobs": [497745, 510236, 583365]
     },
     {
       "id": "service_change_hsd_up",
@@ -481,6 +481,13 @@
       "job_number": 497745,
       "work_type": "Service Change",
       "subtype": "TECH RECOVERY",
+      "expected_lines": [{ "code": "R.Q.2.", "amount": 52.83 }],
+      "expected_total": 52.83
+    },
+    {
+      "job_number": 583365,
+      "work_type": "Service Change",
+      "subtype": "FDX TECH RCVRY",
       "expected_lines": [{ "code": "R.Q.2.", "amount": 52.83 }],
       "expected_total": 52.83
     },
