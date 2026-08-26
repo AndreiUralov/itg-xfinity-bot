@@ -27,7 +27,7 @@ Return ONLY valid JSON (no markdown) with this schema:
   "address": "string or null",
   "account_number": "string or null",
   "work_type": "Trouble Call | Service Change | New Install | Special Request | null",
-  "subtype_codes": ["array of codes like HSD OUT, VID OUT, Self Install, HSD NC, HSD RC, VID UP, TECH RECOVERY, INSIDE INGRESS-CF, 75:INSIDE INGRESS"],
+  "subtype_codes": ["array of codes like HSD OUT, VID OUT, Self Install, HSD NC, HSD RC, VID UP, TECH RECOVERY, FDX TECH RCVRY, DF:CHNL-CARE, INSIDE INGRESS-CF, 75:INSIDE INGRESS"],
   "hookup_type": "Aerial | Underground | null",
   "dwelling_type": "string or null"
 }
@@ -36,7 +36,7 @@ Rules:
 - job_number is from header "Job# ######"
 - work_type is the large heading near bottom (Trouble Call, Service Change, New Install, etc.)
 - Self Install is NOT a separate work type — if the screen shows New Install with Self Install / RQ4, set work_type to "New Install" and put "Self Install" in subtype_codes
-- subtype_codes are lines under work_type (HSD OUT, Self Install, HSD NC, HSD RC, VID UP, TECH RECOVERY, INSIDE INGRESS-CF, 75:INSIDE INGRESS, etc.)
+- subtype_codes are lines under work_type (HSD OUT, Self Install, HSD NC, HSD RC, VID UP, TECH RECOVERY, FDX TECH RCVRY, DF:CHNL-CARE, INSIDE INGRESS-CF, 75:INSIDE INGRESS, etc.)
 - address is the full street + city + state + zip when visible on screen
 - account_number is the long number under Account #
 - If multiple screenshots belong to same job, merge fields — prefer non-null values

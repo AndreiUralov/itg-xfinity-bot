@@ -306,7 +306,7 @@ def subtype_keyboard(subtypes: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-SERVICE_CHANGE_SUBTYPES = ["TECH RECOVERY", "HSD UP", "VID UP", "Другое"]
+SERVICE_CHANGE_SUBTYPES = ["TECH RECOVERY", "FDX TECH RCVRY", "HSD UP", "VID UP", "Другое"]
 SPECIAL_REQUEST_SUBTYPES = ["GENESIS SRO-CF", "PROACTIVE XIT-CF", "INSIDE INGRESS-CF", "Другое"]
 NEW_INSTALL_SUBTYPES = ["Self Install", "HSD NC", "HSD RC", "Другое"]
 
