@@ -67,7 +67,7 @@
       "reference_amount": 19.61,
       "category": "repair",
       "label": "Special Request — GENESIS SRO-CF",
-      "tech360_triggers": ["Miscellaneous SRO", "GENESIS", "SRO-CF"],
+      "tech360_triggers": ["Miscellaneous SRO", "GENESIS", "SRO-CF", "RAISE DROP", "23:RAISE DROP", "OUTSDE DROP-AERIAL", "OUTSIDE DROP-AERIAL", "OUTSDE DROP"],
       "confirmed": true,
       "example_job": 492449
     },
@@ -344,11 +344,11 @@
       "match": {
         "work_type": "Special Request"
       },
-      "match_any_subtype": ["GENESIS", "G9:GENESIS", "SRO-CF"],
+      "match_any_subtype": ["GENESIS", "G9:GENESIS", "SRO-CF", "RAISE DROP", "OUTSDE DROP", "OUTSIDE DROP", "OUTSDE DROP-AERIAL", "OUTSIDE DROP-AERIAL"],
       "lines": [{ "code": "R.T.17.", "qty": 1 }],
       "user_prompt": null,
       "confirmed": true,
-      "example_jobs": [492449]
+      "example_jobs": [492449, 586657]
     },
     {
       "id": "special_request_proactive",
@@ -593,6 +593,13 @@
       "subtype": "INSIDE INGRESS-CF",
       "expected_lines": [{ "code": "R.T.9.", "amount": 36.0 }],
       "expected_total": 36.0
+    },
+    {
+      "job_number": 586657,
+      "work_type": "Special Request",
+      "subtype": "RAISE DROP",
+      "expected_lines": [{ "code": "R.T.17.", "amount": 21.11 }],
+      "expected_total": 21.11
     }
   ],
 
@@ -625,7 +632,7 @@
       },
       "Special Request": {
         "codes": [
-          "R.T.17. Miscellaneous SRO",
+          "R.T.17. Miscellaneous SRO (GENESIS / RAISE DROP / etc.)",
           "R.T.7. Proactive (payroll) / R.T.6. (field guide)",
           "R.T.9. Inside Ingress (payroll code unconfirmed — $36)"
         ]
