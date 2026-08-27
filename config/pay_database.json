@@ -67,7 +67,7 @@
       "reference_amount": 19.61,
       "category": "repair",
       "label": "Special Request — GENESIS SRO-CF",
-      "tech360_triggers": ["Miscellaneous SRO", "GENESIS", "SRO-CF"],
+      "tech360_triggers": ["Miscellaneous SRO", "GENESIS", "SRO-CF", "RAISE DROP", "23:RAISE DROP", "OUTSDE DROP-AERIAL", "OUTSIDE DROP-AERIAL", "OUTSDE DROP"],
       "confirmed": true,
       "example_job": 492449
     },
@@ -79,16 +79,6 @@
       "confirmed": false,
       "example_job": 575865,
       "note": "New SR type — payroll code unconfirmed; $36 from field"
-    },
-    "R.T.10.": {
-      "amount": 17.0,
-      "reference_amount": 16.56,
-      "category": "repair",
-      "label": "Special Request — RAISE DROP / OUTSIDE DROP AERIAL",
-      "tech360_triggers": ["RAISE DROP", "23:RAISE DROP", "OUTSDE DROP-AERIAL", "OUTSIDE DROP-AERIAL", "OUTSDE DROP"],
-      "confirmed": false,
-      "example_job": 586657,
-      "note": "New SR type — payroll code unconfirmed; ~$17 from field (may match R.A.1. $17.85 on payroll)"
     },
     "R.T.6.": {
       "amount": 26.15,
@@ -354,11 +344,11 @@
       "match": {
         "work_type": "Special Request"
       },
-      "match_any_subtype": ["GENESIS", "G9:GENESIS", "SRO-CF"],
+      "match_any_subtype": ["GENESIS", "G9:GENESIS", "SRO-CF", "RAISE DROP", "OUTSDE DROP", "OUTSIDE DROP", "OUTSDE DROP-AERIAL", "OUTSIDE DROP-AERIAL"],
       "lines": [{ "code": "R.T.17.", "qty": 1 }],
       "user_prompt": null,
       "confirmed": true,
-      "example_jobs": [492449]
+      "example_jobs": [492449, 586657]
     },
     {
       "id": "special_request_proactive",
@@ -383,18 +373,6 @@
       "user_prompt": null,
       "confirmed": false,
       "example_jobs": [575865]
-    },
-    {
-      "id": "special_request_raise_drop",
-      "priority": 33,
-      "match": {
-        "work_type": "Special Request"
-      },
-      "match_any_subtype": ["RAISE DROP", "OUTSDE DROP", "OUTSIDE DROP", "OUTSDE DROP-AERIAL", "OUTSIDE DROP-AERIAL"],
-      "lines": [{ "code": "R.T.10.", "qty": 1 }],
-      "user_prompt": null,
-      "confirmed": false,
-      "example_jobs": [586657]
     },
     {
       "id": "new_install_self",
@@ -620,8 +598,8 @@
       "job_number": 586657,
       "work_type": "Special Request",
       "subtype": "RAISE DROP",
-      "expected_lines": [{ "code": "R.T.10.", "amount": 17.0 }],
-      "expected_total": 17.0
+      "expected_lines": [{ "code": "R.T.17.", "amount": 21.11 }],
+      "expected_total": 21.11
     }
   ],
 
@@ -654,10 +632,9 @@
       },
       "Special Request": {
         "codes": [
-          "R.T.17. Miscellaneous SRO",
+          "R.T.17. Miscellaneous SRO (GENESIS / RAISE DROP / etc.)",
           "R.T.7. Proactive (payroll) / R.T.6. (field guide)",
-          "R.T.9. Inside Ingress (payroll code unconfirmed — $36)",
-          "R.T.10. Raise Drop / Outside Drop Aerial (payroll code unconfirmed — ~$17)"
+          "R.T.9. Inside Ingress (payroll code unconfirmed — $36)"
         ]
       }
     }
