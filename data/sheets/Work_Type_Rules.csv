@@ -6,5 +6,6 @@ service_change_vid_up,22,Service Change,VID UP,any,R.A.1.,TRUE,FALSE,TRUE,498945
 special_request_genesis,30,Special Request,"GENESIS|G9:GENESIS|SRO-CF",any,R.T.17.,FALSE,FALSE,TRUE,492449
 special_request_proactive,31,Special Request,"PROACTIVE|XIT-CF|MONITOR FAIL|XA:MONITOR",any,R.T.7.,FALSE,FALSE,TRUE,475937
 special_request_inside_ingress,32,Special Request,"INSIDE INGRESS|INSIDE INGRESS-CF|75:INSIDE INGRESS",any,R.T.9.,FALSE,FALSE,FALSE,575865
+special_request_raise_drop,33,Special Request,"RAISE DROP|OUTSDE DROP|OUTSIDE DROP|OUTSDE DROP-AERIAL|OUTSIDE DROP-AERIAL",any,R.T.10.,FALSE,FALSE,FALSE,586657
 new_install,40,New Install,"HSD NC|HSD RC|NC|RC",any,,TRUE,TRUE,TRUE,492264;511180;467347
 self_install,50,Self Install,,,,FALSE,FALSE,FALSE,
