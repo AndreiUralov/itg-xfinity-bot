@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from bot.line_types import LINE_TYPE_PRODUCTION, LINE_TYPE_TIP
+from bot.line_types import INCOME_LINE_TYPES, LINE_TYPE_PER_DIEM, LINE_TYPE_PRODUCTION, LINE_TYPE_TIP
 from datetime_miami import format_atn_datetime, miami_now, parse_completion_datetime
 
 from reportlab.lib import colors
@@ -138,12 +138,19 @@ def build_weekly_invoice(
 ) -> WeeklyInvoice:
     db = db or load_json(DB_PATH)
     sorted_lines = sort_lines(lines)
-    production = round(sum(line.item_total for line in sorted_lines if line.line_type != LINE_TYPE_TIP), 2)
+    production = round(
+        sum(line.item_total for line in sorted_lines if line.line_type not in INCOME_LINE_TYPES),
+        2,
+    )
     tips = round(sum(line.item_total for line in sorted_lines if line.line_type == LINE_TYPE_TIP), 2)
+    per_diem = round(
+        sum(line.item_total for line in sorted_lines if line.line_type == LINE_TYPE_PER_DIEM),
+        2,
+    )
     truck = db["deductions"]["truck"]["full_week"] if full_week else db["deductions"]["truck"]["partial_week_example"]
     meter = db["deductions"]["meter"]["per_week"]
     deposit_val = deposit or 0.0
-    net = round(production - truck - meter - deposit_val + tips, 2)
+    net = round(production - truck - meter - deposit_val + tips + per_diem, 2)
     lag = db["meta"].get("payment_lag_days", 13)
 
     return WeeklyInvoice(

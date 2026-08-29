@@ -17,12 +17,16 @@ from bot.line_types import (
     FUEL_JOB_CODE,
     FUEL_RULE_ID,
     LINE_TYPE_FUEL,
+    LINE_TYPE_PER_DIEM,
     LINE_TYPE_PRODUCTION,
     LINE_TYPE_TIP,
+    PER_DIEM_JOB_CODE,
+    PER_DIEM_RULE_ID,
     TIP_JOB_CODE,
     TIP_RULE_ID,
     is_production_line,
     sum_fuel,
+    sum_per_diem,
     sum_production,
     sum_tips,
 )
@@ -316,6 +320,74 @@ def save_fuel(
     return backup_path
 
 
+def save_per_diem(
+    *,
+    owner_telegram_id: int,
+    tech_label: str,
+    amount: float,
+    work_area: str | None = None,
+    completion_datetime: datetime | None = None,
+    notes: str = "",
+) -> Path:
+    """Save a standalone per diem / travel allowance (shown on ATN invoice)."""
+    per_diem_value = round(float(amount), 2)
+    if per_diem_value <= 0:
+        raise ValueError("Per diem amount must be greater than zero")
+
+    now = miami_now()
+    completed = completion_datetime or now
+    completion_str = format_atn_datetime(completed)
+    week_start, week_end = week_bounds(completed.date())
+    area = work_area or DEFAULT_WORK_AREA
+    per_diem_ref = f"D{now.strftime('%H%M%S%f')[:9]}"
+
+    row = {
+        "recorded_at": now.isoformat(),
+        "week_start": week_start.isoformat(),
+        "week_end": week_end.isoformat(),
+        "tech": tech_label,
+        "owner_telegram_id": owner_telegram_id,
+        "job_number": per_diem_ref,
+        "work_area": area,
+        "completion_date": completion_str,
+        "address": "PER DIEM",
+        "account_number": "",
+        "work_type": "Per Diem",
+        "subtype_codes": "",
+        "hookup_type": "",
+        "rule_id": PER_DIEM_RULE_ID,
+        "job_code": PER_DIEM_JOB_CODE,
+        "qty": 1,
+        "item_total": per_diem_value,
+        "line_type": LINE_TYPE_PER_DIEM,
+        "confirmed": "TRUE",
+        "notes": notes,
+    }
+
+    if _use_db():
+        from bot.db_store import append_rows
+
+        append_rows([row])
+    else:
+        _ensure_csv()
+        with JOB_LINES_CSV.open("a", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            writer.writerow(row)
+
+    backup_dir = ROOT / "data" / "job_lines" / "archive"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{now.strftime('%Y%m%d_%H%M%S')}_perdiem_{per_diem_ref}.json"
+    backup_path.write_text(
+        json.dumps(
+            {"saved_at": now.isoformat(), "per_diem_ref": per_diem_ref, "rows": [row]},
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return backup_path
+
+
 def load_week_lines(
     week_start: date,
     week_end: date,
@@ -411,6 +483,7 @@ def week_totals(owner_telegram_id: int, week_start: date | None = None) -> dict[
     production = sum_production(lines)
     tips = sum_tips(lines)
     fuel = sum_fuel(lines)
+    per_diem = sum_per_diem(lines)
     jobs = len({r["job_number"] for r in lines if is_production_line(r)})
     return {
         "week_start": week_start,
@@ -418,6 +491,7 @@ def week_totals(owner_telegram_id: int, week_start: date | None = None) -> dict[
         "production": production,
         "tips": tips,
         "fuel": fuel,
+        "per_diem": per_diem,
         "line_count": len(lines),
         "job_count": jobs,
     }

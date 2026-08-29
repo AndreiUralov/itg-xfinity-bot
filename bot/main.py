@@ -29,6 +29,7 @@ from bot.handlers import (
     cmd_invoice,
     cmd_off,
     cmd_on,
+    cmd_perdiem,
     cmd_setup,
     cmd_start,
     cmd_tips,
@@ -55,6 +56,7 @@ BOT_COMMANDS = [
     BotCommand("today", "Работы за сегодня — изменить / удалить"),
     BotCommand("tips", "Добавить чаевые (не в план)"),
     BotCommand("fuel", "Затраты на бензин"),
+    BotCommand("perdiem", "Командировочные (per diem)"),
     BotCommand("week", "Итог текущей недели"),
     BotCommand("invoice", "PDF инвойс ATN — выбор недели"),
     BotCommand("cancel", "Отменить текущую работу"),
@@ -129,6 +131,7 @@ def _build_application(*, webhook: bool) -> Application:
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("tips", cmd_tips))
     app.add_handler(CommandHandler("fuel", cmd_fuel))
+    app.add_handler(CommandHandler("perdiem", cmd_perdiem))
     app.add_handler(CommandHandler("invoice", cmd_invoice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))

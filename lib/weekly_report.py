@@ -150,10 +150,14 @@ def generate_weekly_report(
         lines = filter_lines_for_week(all_lines, week_start, week_end)
 
     fuel_total = 0.0
+    per_diem_total = 0.0
     try:
         from bot.storage import load_week_lines
+        from bot.line_types import sum_fuel, sum_per_diem
 
-        fuel_total = sum_fuel(load_week_lines(week_start, week_end, owner_telegram_id))
+        week_rows = load_week_lines(week_start, week_end, owner_telegram_id)
+        fuel_total = sum_fuel(week_rows)
+        per_diem_total = sum_per_diem(week_rows)
     except Exception:
         pass
 
@@ -183,6 +187,7 @@ def generate_weekly_report(
                 "production": invoice.production,
                 "tips": invoice.tips,
                 "fuel": fuel_total,
+                "per_diem": per_diem_total,
                 "truck": invoice.truck,
                 "meter": invoice.meter,
                 "deposit": invoice.deposit,
