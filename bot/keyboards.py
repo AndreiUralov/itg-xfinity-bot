@@ -83,6 +83,28 @@ def fuel_keyboard(*, show_cancel: bool = True) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def per_diem_keyboard(*, for_yesterday: bool = False, show_cancel: bool = True) -> InlineKeyboardMarkup:
+    amounts = [50, 75, 100, 125, 150, 175, 200]
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    suffix = ":yesterday" if for_yesterday else ""
+    for amount in amounts:
+        row.append(InlineKeyboardButton(f"${amount}", callback_data=f"perdiem:{amount}{suffix}"))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    if for_yesterday:
+        rows.append([InlineKeyboardButton("📅 Сегодня", callback_data="perdiem:menu:today")])
+    else:
+        rows.append([InlineKeyboardButton("📅 За вчера", callback_data="perdiem:menu:yesterday")])
+    rows.append([InlineKeyboardButton("✏️ Другая сумма", callback_data=f"perdiem:custom{suffix}")])
+    if show_cancel:
+        rows.append([InlineKeyboardButton("❌ Отмена", callback_data="perdiem:cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
 def _short_month(day: date) -> str:
     months = (
         "янв", "фев", "мар", "апр", "май", "июн",
@@ -123,6 +145,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("💵 Чаевые", callback_data="tips:menu"),
                 InlineKeyboardButton("⛽ Бензин", callback_data="fuel:menu"),
             ],
+            [InlineKeyboardButton("🧳 Командировочные", callback_data="perdiem:menu")],
             [InlineKeyboardButton("📋 Сегодня", callback_data="today:refresh")],
         ]
     )

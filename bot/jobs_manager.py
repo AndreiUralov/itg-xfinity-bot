@@ -10,7 +10,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 
-from bot.line_types import is_fuel_line, is_production_line, is_tip_line, sum_fuel, sum_tips
+from bot.line_types import is_fuel_line, is_per_diem_line, is_production_line, is_tip_line, sum_fuel, sum_per_diem, sum_tips
 from bot.storage import read_all_rows, write_all_rows
 from datetime_miami import miami_now
 
@@ -51,6 +51,11 @@ def get_today_fuel(owner_telegram_id: int, day: date | None = None) -> list[dict
     return [r for r in _read_all_rows(owner_telegram_id) if _row_day(r) == target and is_fuel_line(r)]
 
 
+def get_today_per_diem(owner_telegram_id: int, day: date | None = None) -> list[dict[str, str]]:
+    target = day or miami_now().date()
+    return [r for r in _read_all_rows(owner_telegram_id) if _row_day(r) == target and is_per_diem_line(r)]
+
+
 def get_today_jobs(owner_telegram_id: int, day: date | None = None) -> list[dict[str, Any]]:
     target = day or miami_now().date()
     all_rows = _read_all_rows(owner_telegram_id)
@@ -88,11 +93,13 @@ def today_totals(owner_telegram_id: int, day: date | None = None) -> dict[str, A
     jobs = get_today_jobs(owner_telegram_id, day)
     tips = sum_tips(get_today_tips(owner_telegram_id, day))
     fuel = sum_fuel(get_today_fuel(owner_telegram_id, day))
+    per_diem = sum_per_diem(get_today_per_diem(owner_telegram_id, day))
     return {
         "job_count": len(jobs),
         "production": round(sum(j["total"] for j in jobs), 2),
         "tips": tips,
         "fuel": fuel,
+        "per_diem": per_diem,
     }
 
 

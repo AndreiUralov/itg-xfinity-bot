@@ -35,6 +35,7 @@ from bot.keyboards import (  # noqa: E402
     fuel_keyboard,
     invoice_week_keyboard,
     main_menu_keyboard,
+    per_diem_keyboard,
     photo_actions_keyboard,
     product_keyboard,
     subtype_keyboard,
@@ -52,6 +53,7 @@ from bot.jobs_manager import (  # noqa: E402
     get_job,
     get_today_fuel,
     get_today_jobs,
+    get_today_per_diem,
     get_today_tips,
     job_to_session_data,
     today_totals,
@@ -72,7 +74,7 @@ from bot.settings_store import (  # noqa: E402
     set_weekly_goal_with_daily,
     set_work_day,
 )
-from bot.storage import save_fuel, save_job, save_tip, week_bounds, week_totals  # noqa: E402
+from bot.storage import save_fuel, save_job, save_per_diem, save_tip, week_bounds, week_totals  # noqa: E402
 from bot.users import (  # noqa: E402
     UserProfile,
     ensure_legacy_migration,
@@ -92,6 +94,7 @@ from calculator import calculate_job, find_matching_rule, load_database  # noqa:
 TZ = ZoneInfo("America/New_York")
 TIPS_BUTTON_TEXT = "💵 Чаевые"
 FUEL_BUTTON_TEXT = "⛽ Бензин"
+PER_DIEM_BUTTON_TEXT = "🧳 Командировочные"
 
 _media_group_buffers: dict[str, dict[str, Any]] = {}
 _photo_wait_tasks: dict[int, asyncio.Task] = {}
@@ -423,6 +426,8 @@ def _format_stats_block(owner_telegram_id: int) -> str:
         today_extras.append(f"💵 ${day['tips']:,.2f}")
     if day.get("fuel"):
         today_extras.append(f"⛽ ${day['fuel']:,.2f}")
+    if day.get("per_diem"):
+        today_extras.append(f"🧳 ${day['per_diem']:,.2f}")
     if today_extras:
         lines.append("   " + "  ·  ".join(today_extras))
 
@@ -436,7 +441,8 @@ def _format_stats_block(owner_telegram_id: int) -> str:
         f"<b>${week['production']:,.2f}</b>"
     )
     lines.append(
-        f"   💵 ${week.get('tips', 0):,.2f}  ·  ⛽ ${week.get('fuel', 0):,.2f}"
+        f"   💵 ${week.get('tips', 0):,.2f}  ·  ⛽ ${week.get('fuel', 0):,.2f}  ·  "
+        f"🧳 ${week.get('per_diem', 0):,.2f}"
     )
 
     goal_block = _goal_progress_line(owner_telegram_id)
@@ -629,7 +635,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "6. Выбери оборудование (если нужно)\n"
         "7. Работа сохранится для недельного инвойса ATN\n\n"
         "<b>Чаевые:</b> /tips или «💵 Чаевые» — не идут в план.\n"
-        "<b>Бензин:</b> /fuel или «⛽ Бензин» — учёт расходов, не в план.\n\n"
+        "<b>Бензин:</b> /fuel или «⛽ Бензин» — учёт расходов, не в план.\n"
+        "<b>Командировочные:</b> /perdiem или «🧳 Командировочные» — per diem, "
+        "попадает в инвойс ATN. Можно за вчера: <code>/perdiem 75 вчера</code>\n\n"
         "<b>Быстрый ввод без скрина:</b>\n"
         "<code>549110 trouble</code> · <code>508836 service</code>\n\n"
         "/on — на работе · /off — выходной\n"
@@ -667,7 +675,8 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     meter = db["deductions"]["meter"]["per_week"]
     tips = totals.get("tips", 0.0)
     fuel = totals.get("fuel", 0.0)
-    net = round(totals["production"] - truck - meter + tips - fuel, 2)
+    per_diem = totals.get("per_diem", 0.0)
+    net = round(totals["production"] - truck - meter + tips + per_diem - fuel, 2)
     work_days = count_work_days(totals['week_start'], totals['week_end'], user_settings_key(owner_telegram_id))
     goal_line = goals_progress_block(owner_telegram_id)
     extra = f"\n{goal_line}" if goal_line else ""
@@ -679,6 +688,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Строк: {totals['line_count']}\n"
         f"Production: <b>${totals['production']:,.2f}</b>\n"
         f"Чаевые: <b>${tips:,.2f}</b>\n"
+        f"Командировочные: <b>${per_diem:,.2f}</b>\n"
         f"Бензин: <b>${fuel:,.2f}</b>\n"
         f"Truck: (${truck:,.2f})\n"
         f"Meter: (${meter:,.2f})\n"
@@ -707,6 +717,9 @@ def _format_today_list(jobs: list[dict], owner_telegram_id: int) -> str:
         header += f"\n💵 Чаевые сегодня: <b>${tips_total:.2f}</b> (не в плане)"
     if fuel_total:
         header += f"\n⛽ Бензин сегодня: <b>${fuel_total:.2f}</b>"
+    per_diem_total = round(sum(float(r["item_total"]) for r in get_today_per_diem(owner_telegram_id)), 2)
+    if per_diem_total:
+        header += f"\n🧳 Per diem сегодня: <b>${per_diem_total:.2f}</b>"
     lines = [header + "\n"]
     for i, job in enumerate(jobs, 1):
         addr = job.get("address") or "—"
@@ -799,6 +812,117 @@ async def cmd_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     context.user_data["step"] = "pick_fuel"
     await _send_fuel_menu(update.message, profile.telegram_user_id)
+
+
+def _parse_per_diem_date(text: str) -> date | None:
+    """Parse optional date token: вчера/yesterday, DD.MM, DD.MM.YYYY."""
+    cleaned = text.strip().lower()
+    if cleaned in ("вчера", "yesterday", "вч"):
+        return miami_now().date() - timedelta(days=1)
+    match = re.fullmatch(r"(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?", cleaned)
+    if not match:
+        return None
+    day_num = int(match.group(1))
+    month_num = int(match.group(2))
+    year_raw = match.group(3)
+    if year_raw:
+        year_num = int(year_raw)
+        if year_num < 100:
+            year_num += 2000
+    else:
+        year_num = miami_now().year
+    try:
+        return date(year_num, month_num, day_num)
+    except ValueError:
+        return None
+
+
+def _per_diem_completion_datetime(target_day: date) -> datetime:
+    now = miami_now()
+    if target_day == now.date():
+        return now
+    return datetime.combine(target_day, now.time(), tzinfo=TZ)
+
+
+def _per_diem_date_label(target_day: date) -> str:
+    today = miami_now().date()
+    if target_day == today:
+        return "сегодня"
+    if target_day == today - timedelta(days=1):
+        return "вчера"
+    return target_day.strftime("%d.%m.%Y")
+
+
+def _per_diem_menu_text(owner_telegram_id: int, *, for_yesterday: bool = False) -> str:
+    target = miami_now().date() - timedelta(days=1) if for_yesterday else miami_now().date()
+    entries = get_today_per_diem(owner_telegram_id, target)
+    total = round(sum(float(r["item_total"]) for r in entries), 2)
+    count = len(entries)
+    when = _per_diem_date_label(target)
+    lines = [
+        "🧳 <b>Командировочные (per diem)</b>",
+        "",
+        f"За {when}: <b>${total:.2f}</b> ({count})",
+        "<i>Отображается в инвойсе ATN.</i>",
+        "",
+        "Выбери сумму или введи свою:",
+    ]
+    return "\n".join(lines)
+
+
+async def _send_per_diem_menu(
+    target,
+    owner_telegram_id: int,
+    *,
+    for_yesterday: bool = False,
+    edit: bool = False,
+) -> None:
+    text = _per_diem_menu_text(owner_telegram_id, for_yesterday=for_yesterday)
+    markup = per_diem_keyboard(for_yesterday=for_yesterday)
+    if edit and hasattr(target, "edit_message_text"):
+        await target.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    else:
+        await target.reply_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def cmd_perdiem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    profile = await _ensure_user(update, context)
+    if not profile:
+        return
+
+    parts = (update.message.text or "").split()[1:]
+    if not parts:
+        context.user_data["step"] = "pick_per_diem"
+        context.user_data.pop("per_diem_for_yesterday", None)
+        await _send_per_diem_menu(update.message, profile.telegram_user_id)
+        return
+
+    amount = _parse_tip_amount(parts[0])
+    if amount is None:
+        await update.message.reply_text(
+            "⚠️ Пример: <code>/perdiem 75</code> или <code>/perdiem 75 вчера</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    target_day = miami_now().date()
+    if len(parts) >= 2:
+        parsed = _parse_per_diem_date(parts[1])
+        if parsed is None:
+            await update.message.reply_text(
+                "⚠️ Дата: <code>вчера</code> или <code>28.08</code>",
+                parse_mode="HTML",
+            )
+            return
+        target_day = parsed
+
+    await _save_standalone_per_diem(
+        update.message,
+        context,
+        amount,
+        completion_datetime=_per_diem_completion_datetime(target_day),
+        date_label=_per_diem_date_label(target_day),
+    )
 
 
 async def _send_today_list(target, owner_telegram_id: int, *, edit: bool = False) -> None:
@@ -1050,12 +1174,34 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _save_standalone_fuel(update.message, context, fuel_amount)
         return
 
+    if step == "await_standalone_per_diem" or step == "pick_per_diem":
+        per_diem_amount = _parse_tip_amount(text)
+        if per_diem_amount is None:
+            await update.message.reply_text(
+                "⚠️ Введи сумму числом, напр. <code>75</code> или <code>125.50</code>",
+                parse_mode="HTML",
+            )
+            return
+        for_yesterday = bool(context.user_data.get("per_diem_for_yesterday"))
+        target_day = miami_now().date() - timedelta(days=1) if for_yesterday else miami_now().date()
+        await _save_standalone_per_diem(
+            update.message,
+            context,
+            per_diem_amount,
+            completion_datetime=_per_diem_completion_datetime(target_day),
+            date_label=_per_diem_date_label(target_day),
+        )
+        return
+
     if not step:
         if text == TIPS_BUTTON_TEXT:
             await cmd_tips(update, context)
             return
         if text == FUEL_BUTTON_TEXT:
             await cmd_fuel(update, context)
+            return
+        if text == PER_DIEM_BUTTON_TEXT:
+            await cmd_perdiem(update, context)
             return
         if _should_accept_standalone_tip_text(text):
             tip_amount = _parse_tip_amount(text, allow_negative=True)
@@ -1481,6 +1627,49 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _save_standalone_fuel(query, context, fuel_amount)
         return
 
+    if data.startswith("perdiem:"):
+        action = data[8:]
+        if action == "menu" or action == "menu:today":
+            context.user_data["step"] = "pick_per_diem"
+            context.user_data.pop("per_diem_for_yesterday", None)
+            await _send_per_diem_menu(query, owner_telegram_id, edit=True)
+            return
+        if action == "menu:yesterday":
+            context.user_data["step"] = "pick_per_diem"
+            context.user_data["per_diem_for_yesterday"] = True
+            await _send_per_diem_menu(query, owner_telegram_id, for_yesterday=True, edit=True)
+            return
+        if action == "cancel":
+            context.user_data.pop("step", None)
+            context.user_data.pop("per_diem_for_yesterday", None)
+            await query.edit_message_text("❌ Отменено.")
+            return
+        for_yesterday = action.endswith(":yesterday")
+        base_action = action[:-10] if for_yesterday else action
+        if base_action == "custom":
+            context.user_data["step"] = "await_standalone_per_diem"
+            context.user_data["per_diem_for_yesterday"] = for_yesterday
+            await query.answer()
+            when = "вчера" if for_yesterday else "сегодня"
+            await query.message.reply_text(
+                f"🧳 Введи сумму per diem ($) за <b>{when}</b>, напр. <code>75</code> или <code>125.50</code>",
+                parse_mode="HTML",
+            )
+            return
+        per_diem_amount = _parse_tip_amount(base_action)
+        if per_diem_amount is None:
+            await query.answer("Неверная сумма", show_alert=True)
+            return
+        target_day = miami_now().date() - timedelta(days=1) if for_yesterday else miami_now().date()
+        await _save_standalone_per_diem(
+            query,
+            context,
+            per_diem_amount,
+            completion_datetime=_per_diem_completion_datetime(target_day),
+            date_label=_per_diem_date_label(target_day),
+        )
+        return
+
     if data.startswith("up:"):
         mode = data[3:]
         if mode not in ("swap", "add"):
@@ -1731,6 +1920,36 @@ async def _save_standalone_fuel(target, context, fuel_amount: float) -> None:
     await _respond(
         target,
         f"✅ <b>Бензин ${fuel_amount:.2f}</b> добавлен\n\n{_format_stats_block(owner_telegram_id)}",
+        parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+async def _save_standalone_per_diem(
+    target,
+    context,
+    per_diem_amount: float,
+    *,
+    completion_datetime: datetime | None = None,
+    date_label: str = "сегодня",
+) -> None:
+    owner_telegram_id = _owner_id(context)
+    try:
+        save_per_diem(
+            owner_telegram_id=owner_telegram_id,
+            tech_label=_tech_label(context),
+            amount=per_diem_amount,
+            completion_datetime=completion_datetime,
+        )
+    except Exception as exc:
+        await _respond(target, f"⚠️ Не удалось сохранить per diem: {exc}")
+        return
+    context.user_data.pop("step", None)
+    context.user_data.pop("per_diem_for_yesterday", None)
+    await _respond(
+        target,
+        f"✅ <b>Per diem ${per_diem_amount:.2f}</b> за {date_label} — попадёт в инвойс\n\n"
+        f"{_format_stats_block(owner_telegram_id)}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
