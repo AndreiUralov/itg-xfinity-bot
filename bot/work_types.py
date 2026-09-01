@@ -6,6 +6,7 @@ from typing import Any
 
 SELF_INSTALL_MARKERS = ("SELF INSTALL", "RQ4", "R.Q.4.")
 SELF_INSTALL_PRODUCT_CODE = "R.Q.4."
+DEFAULT_TROUBLE_CALL_SUBTYPE = "HSD OUT"
 
 
 def _subtype_blob(subtype_codes: list[str] | None) -> str:
@@ -28,6 +29,10 @@ def normalize_extracted(extracted: dict[str, Any]) -> dict[str, Any]:
         extracted["work_type"] = "New Install"
         if not is_new_install_self(extracted):
             codes.append("Self Install")
+        extracted["subtype_codes"] = codes
+
+    if work_type == "Trouble Call" and not codes:
+        codes.append(DEFAULT_TROUBLE_CALL_SUBTYPE)
         extracted["subtype_codes"] = codes
 
     return extracted

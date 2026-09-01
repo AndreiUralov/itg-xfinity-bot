@@ -261,6 +261,7 @@ def _preview_pay(
     addons: list[str] | None = None,
     up_install_mode: str | None = None,
 ):
+    normalize_extracted(data)
     db = _get_db()
     return calculate_job(
         db,
@@ -1538,6 +1539,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if data == "act:confirm":
+        extracted = normalize_extracted(extracted)
+        context.user_data["extracted"] = extracted
         rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
         if not rule:
             await query.edit_message_text("⚠️ Не удалось определить правило оплаты. Выбери тип работы.", reply_markup=work_type_keyboard())
