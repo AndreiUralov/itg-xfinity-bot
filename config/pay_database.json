@@ -286,19 +286,11 @@
       "match": {
         "work_type": "Trouble Call"
       },
-      "match_any_subtype": [
-        "HSD OUT",
-        "H2:INT OUT",
-        "VIDEO TC",
-        "RPT TC",
-        "INT OUT",
-        "VID OUT",
-        "TV ALL OUT"
-      ],
       "lines": [{ "code": "R.T.8.", "qty": 1 }],
       "user_prompt": null,
       "confirmed": true,
-      "example_jobs": [509413, 506037, 502640, 508836]
+      "example_jobs": [509413, 506037, 502640, 508836, 279516],
+      "note": "Any Trouble Call code — R.T.8. @ $39.91"
     },
     {
       "id": "service_change_tech_recovery",
@@ -497,6 +489,13 @@
       "job_number": 509413,
       "work_type": "Trouble Call",
       "subtype": "HSD OUT",
+      "expected_lines": [{ "code": "R.T.8.", "amount": 39.91 }],
+      "expected_total": 39.91
+    },
+    {
+      "job_number": 279516,
+      "work_type": "Trouble Call",
+      "subtype": "HSD TC",
       "expected_lines": [{ "code": "R.T.8.", "amount": 39.91 }],
       "expected_total": 39.91
     },
