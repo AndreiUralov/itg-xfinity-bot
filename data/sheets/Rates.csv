@@ -1,8 +1,8 @@
 code,category,amount,reference_amount,label_en,label_ru,confirmed,auto_or_manual,notes
 R.T.8.,repair,39.91,37.35,Trouble Call (standard),Trouble Call — стандарт,TRUE,auto,O01 / T24 / u40 / u21
 R.T.7.,repair,37.57,26.15,Special Request PROACTIVE,Special Request PROACTIVE,TRUE,auto,Field guide R.T.6. may be legacy
-R.T.17.,repair,21.11,19.61,Special Request standard,Special Request — стандарт,TRUE,auto,Any SR code except PROACTIVE
-R.T.9.,repair,36.00,,Special Request INSIDE INGRESS (legacy),Special Request INSIDE INGRESS,FALSE,auto,Deprecated — use R.T.17.
+R.T.17.,repair,21.11,19.61,Special Request standard,Special Request — стандарт,TRUE,auto,Any SR except INGRESS / PROACTIVE
+R.T.9.,repair,36.00,,Special Request INGRESS,Special Request INGRESS,TRUE,auto,Code contains INGRESS
 R.Q.2.,service_change,52.83,52.73,Service Change TECH RECOVERY,Service Change TECH RECOVERY,TRUE,auto,TECH RECOVERY / FDX TECH RCVRY / DF:CHNL-CARE
 R.Q.4.,self_install,42.26,40.00,Self Install,Self Install,TRUE,auto,Field guide RQ4
 R.A.1.,service_change_up,17.85,16.56,Service Change UP swap,Service Change UP — swap,TRUE,auto,HSD UP / VID UP — replace only

@@ -67,17 +67,18 @@
       "reference_amount": 19.61,
       "category": "repair",
       "label": "Special Request (standard)",
-      "tech360_triggers": ["Miscellaneous SRO", "GENESIS", "SRO-CF", "RAISE DROP", "INSIDE INGRESS", "REMOVE DROP"],
+      "tech360_triggers": ["Miscellaneous SRO", "GENESIS", "SRO-CF", "RAISE DROP", "REMOVE DROP"],
       "confirmed": true,
       "example_job": 492449
     },
     "R.T.9.": {
       "amount": 36.0,
       "category": "repair",
-      "label": "Special Request — INSIDE INGRESS-CF (legacy)",
-      "tech360_triggers": ["INSIDE INGRESS", "INSIDE INGRESS-CF", "75:INSIDE INGRESS"],
-      "confirmed": false,
-      "note": "No longer billed separately — all standard SR use R.T.17. @ $21.11"
+      "label": "Special Request — INSIDE INGRESS",
+      "tech360_triggers": ["INSIDE INGRESS", "INSIDE INGRESS-CF", "75:INSIDE INGRESS", "INGRESS"],
+      "confirmed": true,
+      "example_job": 575865,
+      "note": "Any SR code containing INGRESS — $36 from field"
     },
     "R.T.6.": {
       "amount": 26.15,
@@ -348,7 +349,20 @@
       "user_prompt": null,
       "confirmed": true,
       "example_jobs": [475937],
-      "note": "Only SR variant with higher pay ($37.57)"
+      "note": "PROACTIVE XIT-CF — higher SR pay ($37.57)"
+    },
+    {
+      "id": "special_request_inside_ingress",
+      "priority": 32,
+      "match": {
+        "work_type": "Special Request"
+      },
+      "match_any_subtype": ["INGRESS"],
+      "lines": [{ "code": "R.T.9.", "qty": 1 }],
+      "user_prompt": null,
+      "confirmed": true,
+      "example_jobs": [575865],
+      "note": "Any code containing INGRESS — $36.00"
     },
     {
       "id": "special_request_default",
@@ -359,8 +373,8 @@
       "lines": [{ "code": "R.T.17.", "qty": 1 }],
       "user_prompt": null,
       "confirmed": true,
-      "example_jobs": [492449, 575865, 586657, 267779],
-      "note": "Catch-all — any Special Request code at standard SR rate ($21.11)"
+      "example_jobs": [492449, 586657, 267779],
+      "note": "Catch-all — any other Special Request ($21.11)"
     },
     {
       "id": "new_install_self",
@@ -579,8 +593,8 @@
       "job_number": 575865,
       "work_type": "Special Request",
       "subtype": "INSIDE INGRESS-CF",
-      "expected_lines": [{ "code": "R.T.17.", "amount": 21.11 }],
-      "expected_total": 21.11
+      "expected_lines": [{ "code": "R.T.9.", "amount": 36.0 }],
+      "expected_total": 36.0
     },
     {
       "job_number": 586657,
@@ -627,8 +641,9 @@
       },
       "Special Request": {
         "codes": [
-          "R.T.17. Standard SR — any code ($21.11)",
-          "R.T.7. PROACTIVE XIT-CF only ($37.57)"
+          "R.T.17. Standard SR — any other code ($21.11)",
+          "R.T.9. INGRESS in code ($36.00)",
+          "R.T.7. PROACTIVE XIT-CF ($37.57)"
         ]
       }
     }
