@@ -36,7 +36,7 @@ Rules:
 - job_number is from header "Job# ######"
 - work_type is the large heading near bottom (Trouble Call, Service Change, New Install, etc.)
 - Self Install is NOT a separate work type — if the screen shows New Install with Self Install / RQ4, set work_type to "New Install" and put "Self Install" in subtype_codes
-- subtype_codes are lines under work_type (HSD OUT, Self Install, TECH RECOVERY, FDX TECH RCVRY, INSIDE INGRESS-CF, RAISE DROP, OUTSDE DROP-AERIAL, 23:RAISE DROP, etc.)
+- subtype_codes are lines under work_type (HSD OUT, HSD TC, H3:INT IMT BLKSYNC, VID OUT, Self Install, TECH RECOVERY, etc.)
 - address is the full street + city + state + zip when visible on screen
 - account_number is the long number under Account #
 - If multiple screenshots belong to same job, merge fields — prefer non-null values

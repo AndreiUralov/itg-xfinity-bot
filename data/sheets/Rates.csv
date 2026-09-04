@@ -1,5 +1,5 @@
 code,category,amount,reference_amount,label_en,label_ru,confirmed,auto_or_manual,notes
-R.T.8.,repair,39.91,37.35,Trouble Call (standard),Trouble Call — стандарт,TRUE,auto,O01 / T24 / u40 / u21
+R.T.8.,repair,39.91,37.35,Trouble Call (standard),Trouble Call — стандарт,TRUE,auto,Any TC code — HSD OUT/TC/VID OUT/etc.
 R.T.7.,repair,37.57,26.15,Special Request PROACTIVE,Special Request PROACTIVE,TRUE,auto,Field guide R.T.6. may be legacy
 R.T.17.,repair,21.11,19.61,Special Request standard,Special Request — стандарт,TRUE,auto,Any SR except INGRESS / PROACTIVE
 R.T.9.,repair,36.00,,Special Request INGRESS,Special Request INGRESS,TRUE,auto,Code contains INGRESS
