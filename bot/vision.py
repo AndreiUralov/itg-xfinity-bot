@@ -35,7 +35,9 @@ Return ONLY valid JSON (no markdown) with this schema:
 Rules:
 - job_number is from header "Job# ######"
 - work_type is the large heading near bottom (Trouble Call, Service Change, New Install, etc.)
-- Self Install is NOT a separate work type — if the screen shows New Install with Self Install / RQ4, set work_type to "New Install" and put "Self Install" in subtype_codes
+- Self Install is NOT a separate work type — it is always a subcode under New Install
+- If the screen shows New Install with "Self Install" / "RQ4" / "R.Q.4." on a line below the heading, set work_type to "New Install" and include "Self Install" in subtype_codes (this bills as R.Q.4. only — no equipment lines)
+- Always capture Self Install when visible — it changes payroll from a full install (R.N.1.+E.C.5.) to self install (R.Q.4.)
 - subtype_codes are lines under work_type (HSD OUT, HSD TC, H3:INT IMT BLKSYNC, VID OUT, Self Install, TECH RECOVERY, etc.)
 - address is the full street + city + state + zip when visible on screen
 - account_number is the long number under Account #
