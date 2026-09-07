@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+U44_ADDON_CODE = "R.R.4.NB"
+U44_LEGACY_ADDON_CODE = "R.R.4."
+U44_SUBTYPE_MARKERS = ("U44", "BURY", "BURRY")
 SELF_INSTALL_MARKERS = ("SELF INSTALL", "SELF-INSTALL", "RQ4", "R.Q.4.")
 SELF_INSTALL_PRODUCT_CODE = "R.Q.4."
 DEFAULT_TROUBLE_CALL_SUBTYPE = "HSD OUT"
@@ -44,6 +47,54 @@ def apply_self_install_session(extracted: dict[str, Any], session: dict[str, Any
     session["optional_addons"] = []
     session.pop("up_install_mode", None)
     return True
+
+
+def needs_u44_prompt(extracted: dict[str, Any]) -> bool:
+    """New Install (not Self Install) and Service Change may include U44 bury drop addon."""
+    work_type = (extracted.get("work_type") or "").strip()
+    if work_type == "New Install":
+        return not is_new_install_self(extracted)
+    return work_type == "Service Change"
+
+
+def has_u44_addon(addons: list[str] | None) -> bool:
+    return any(code in (U44_ADDON_CODE, U44_LEGACY_ADDON_CODE) for code in (addons or []))
+
+
+def subtype_indicates_u44(subtype_codes: list[str] | None) -> bool:
+    blob = _subtype_blob(subtype_codes)
+    return any(marker in blob for marker in U44_SUBTYPE_MARKERS)
+
+
+def apply_u44_from_subtypes(extracted: dict[str, Any], session: dict[str, Any]) -> bool:
+    """Auto-add R.R.4.NB when Tech360 subcode mentions U44/bury."""
+    if not subtype_indicates_u44(extracted.get("subtype_codes")):
+        return False
+    addons = list(session.get("optional_addons") or [])
+    if not has_u44_addon(addons):
+        addons.append(U44_ADDON_CODE)
+    session["optional_addons"] = addons
+    return True
+
+
+def should_prompt_u44(extracted: dict[str, Any], session: dict[str, Any]) -> bool:
+    if not needs_u44_prompt(extracted):
+        return False
+    if session.get("u44_prompt_done"):
+        return False
+    if has_u44_addon(session.get("optional_addons")):
+        return False
+    return True
+
+
+def apply_u44_answer(session: dict[str, Any], *, did_u44: bool) -> None:
+    session["u44_prompt_done"] = True
+    if not did_u44:
+        return
+    addons = list(session.get("optional_addons") or [])
+    if not has_u44_addon(addons):
+        addons.append(U44_ADDON_CODE)
+    session["optional_addons"] = addons
 
 
 def normalize_extracted(extracted: dict[str, Any]) -> dict[str, Any]:

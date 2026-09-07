@@ -94,7 +94,7 @@
       "category": "service_change",
       "label": "Service Change — TECH RECOVERY",
       "tech360_triggers": ["FS3 inactive outlet", "TECH RECOVERY", "TECH RCVRY", "FDX TECH RCVRY", "DF:CHNL-CARE"],
-      "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.4."],
+      "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.4.NB"],
       "confirmed": true,
       "example_jobs": [497745, 510236, 501573, 444856, 502129]
     },
@@ -143,12 +143,23 @@
     "R.R.4.": {
       "amount": 4.36,
       "category": "site_work",
-      "label": "Temporary Drop",
+      "label": "Temporary Drop (field guide code)",
       "label_short": "Temp drop",
-      "tech360_triggers": ["Temporary drop", "U44 underground drop context"],
+      "tech360_triggers": ["Temporary drop"],
       "applies_to": ["service_change", "new_install", "service_change_up"],
       "confirmed": false,
-      "note": "From field guide; not yet seen on payroll sample — amount unconfirmed"
+      "note": "Legacy field guide code; ATN payroll bills R.R.4.NB at $4.36 for U44/bury"
+    },
+    "R.R.4.NB": {
+      "amount": 4.36,
+      "category": "site_work",
+      "label": "U44 / Bury drop",
+      "label_short": "U44 bury",
+      "tech360_triggers": ["U44", "BURY", "BURRY", "underground drop"],
+      "applies_to": ["service_change", "new_install", "service_change_up"],
+      "confirmed": true,
+      "example_job": 572359,
+      "note": "Separate underground/bury drop order — ATN payroll code R.R.4.NB"
     },
     "R.A.1.": {
       "amount": 17.85,
@@ -156,7 +167,7 @@
       "category": "service_change_up",
       "label": "Service Change UP — swap only",
       "tech360_triggers": ["CAO complete as ordered", "VID UPGRADE", "HSD UP", "VID UP"],
-      "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.4."],
+      "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.4.NB"],
       "confirmed": true,
       "example_job": 498945,
       "note": "Swap/replace existing equipment — no additional units on top of what customer already has"
@@ -439,10 +450,10 @@
       "when": "MDU drop в квартире / 262"
     },
     {
-      "code": "R.R.4.",
-      "label": "Temporary Drop",
-      "label_short": "Temp drop +$4.36",
-      "when": "Временный drop"
+      "code": "R.R.4.NB",
+      "label": "U44 / Bury drop",
+      "label_short": "U44 bury +$4.36",
+      "when": "Заказывал U44 / underground bury drop"
     }
   ],
 
@@ -462,11 +473,11 @@
       "confirmed": "partial"
     },
     {
-      "code": "R.R.4.",
+      "code": "R.R.4.NB",
       "amount": 4.36,
-      "label": "Temporary Drop",
-      "label_short": "Temp drop +$4.36",
-      "confirmed": false
+      "label": "U44 / Bury drop",
+      "label_short": "U44 bury +$4.36",
+      "confirmed": true
     }
   ],
 
@@ -484,6 +495,18 @@
       "subtype": "FDX TECH RCVRY",
       "expected_lines": [{ "code": "R.Q.2.", "amount": 52.83 }],
       "expected_total": 52.83
+    },
+    {
+      "job_number": 572359,
+      "work_type": "Service Change",
+      "subtype": "TECH RECOVERY",
+      "optional_addons": ["R.R.4.NB"],
+      "expected_lines": [
+        { "code": "R.Q.2.", "amount": 52.83 },
+        { "code": "R.R.4.NB", "amount": 4.36 }
+      ],
+      "expected_total": 57.19,
+      "note": "ATN week 2026-08-16 — U44/bury drop adds R.R.4.NB on top of TECH RECOVERY"
     },
     {
       "job_number": 509413,

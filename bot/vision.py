@@ -38,7 +38,8 @@ Rules:
 - Self Install is NOT a separate work type — it is always a subcode under New Install
 - If the screen shows New Install with "Self Install" / "RQ4" / "R.Q.4." on a line below the heading, set work_type to "New Install" and include "Self Install" in subtype_codes (this bills as R.Q.4. only — no equipment lines)
 - Always capture Self Install when visible — it changes payroll from a full install (R.N.1.+E.C.5.) to self install (R.Q.4.)
-- subtype_codes are lines under work_type (HSD OUT, HSD TC, H3:INT IMT BLKSYNC, VID OUT, Self Install, TECH RECOVERY, etc.)
+- subtype_codes are lines under work_type (HSD OUT, HSD TC, H3:INT IMT BLKSYNC, VID OUT, Self Install, TECH RECOVERY, U44, etc.)
+- U44 / bury / underground drop on a New Install or Service Change job → include "U44" in subtype_codes (adds R.R.4.NB +$4.36 on payroll)
 - address is the full street + city + state + zip when visible on screen
 - account_number is the long number under Account #
 - If multiple screenshots belong to same job, merge fields — prefer non-null values

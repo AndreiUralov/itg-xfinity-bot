@@ -185,6 +185,16 @@ def product_keyboard(options: list[dict[str, Any]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def u44_prompt_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ Да — U44 / bury (+$4.36)", callback_data="u44:yes")],
+            [InlineKeyboardButton("⏭ Нет", callback_data="u44:no")],
+            [InlineKeyboardButton("« Назад", callback_data="act:back_preview")],
+        ]
+    )
+
+
 def up_install_mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
