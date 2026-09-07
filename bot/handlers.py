@@ -44,6 +44,7 @@ from bot.keyboards import (  # noqa: E402
     today_job_keyboard,
     today_list_keyboard,
     up_install_mode_keyboard,
+    u44_prompt_keyboard,
     work_type_keyboard,
     workday_keyboard,
 )
@@ -85,7 +86,14 @@ from bot.users import (  # noqa: E402
     user_settings_key,
     validate_tech_label,
 )
-from bot.work_types import apply_self_install_session, is_new_install_self, normalize_extracted  # noqa: E402
+from bot.work_types import (  # noqa: E402
+    apply_self_install_session,
+    apply_u44_answer,
+    apply_u44_from_subtypes,
+    is_new_install_self,
+    normalize_extracted,
+    should_prompt_u44,
+)
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
 from datetime_miami import miami_now  # noqa: E402
 from work_area import is_confident, resolve_work_area  # noqa: E402
@@ -310,6 +318,32 @@ async def _prompt_up_base(message_target, context: ContextTypes.DEFAULT_TYPE) ->
         parse_mode="HTML",
         reply_markup=up_install_mode_keyboard(),
     )
+
+
+async def _prompt_u44_addon(message_target, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data["step"] = "u44_prompt"
+    await message_target.edit_message_text(
+        "🪏 <b>U44 / bury drop</b>\n\n"
+        "Заказывал отдельный underground drop / bury?\n"
+        "Если да — ATN добавляет <code>R.R.4.NB</code> <b>+$4.36</b>",
+        parse_mode="HTML",
+        reply_markup=u44_prompt_keyboard(),
+    )
+
+
+async def _finish_or_prompt_u44(
+    target,
+    context: ContextTypes.DEFAULT_TYPE,
+    extracted: dict,
+    pay,
+    rule_id: str,
+) -> None:
+    apply_u44_from_subtypes(extracted, context.user_data)
+    if should_prompt_u44(extracted, context.user_data):
+        context.user_data["pending_rule_id"] = rule_id
+        await _prompt_u44_addon(target, context)
+        return
+    await _save_and_finish(target, context, extracted, pay, rule_id)
 
 
 async def _prompt_up_equipment(message_target, context: ContextTypes.DEFAULT_TYPE, db: dict) -> None:
@@ -1235,6 +1269,7 @@ async def _process_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         paths = await _download_photos(context, file_ids)
         extracted = normalize_extracted(await extract_from_images(paths))
+        apply_u44_from_subtypes(extracted, context.user_data)
     except Exception as exc:
         extracted = empty_extraction()
         context.user_data["extracted"] = extracted
@@ -1439,7 +1474,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             context.user_data.get("product_code"),
             context.user_data.get("optional_addons"),
         )
-        await _save_and_finish(query, context, extracted, pay, rule_id)
+        await _finish_or_prompt_u44(query, context, extracted, pay, rule_id)
         return
 
     if data == "work:on":
@@ -1589,7 +1624,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        await _save_and_finish(query, context, extracted, pay, pay.rule_id or rule["id"])
+        await _finish_or_prompt_u44(query, context, extracted, pay, pay.rule_id or rule["id"])
+        return
+
+    if data.startswith("u44:"):
+        choice = data[4:]
+        extracted = normalize_extracted(extracted)
+        apply_u44_answer(context.user_data, did_u44=(choice == "yes"))
+        rule_id = context.user_data.pop("pending_rule_id", None)
+        if not rule_id:
+            rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
+            rule_id = rule["id"] if rule else "manual"
+        pay = _preview_pay(extracted, **_pay_kwargs(context))
+        await _save_and_finish(query, context, extracted, pay, rule_id)
         return
 
     if data.startswith("tips:"):
@@ -1760,7 +1807,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 reply_markup=duplicate_confirm_keyboard(),
             )
             return
-        await _save_and_finish(query, context, extracted, pay, rule_id)
+        await _finish_or_prompt_u44(query, context, extracted, pay, rule_id)
         return
 
     if data.startswith("addon:"):
@@ -1794,7 +1841,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 reply_markup=duplicate_confirm_keyboard(),
             )
             return
-        await _save_and_finish(query, context, extracted, pay, rule_id)
+        await _finish_or_prompt_u44(query, context, extracted, pay, rule_id)
         return
 
     if data == "today:refresh" or data == "today:back":
