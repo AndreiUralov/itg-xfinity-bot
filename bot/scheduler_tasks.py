@@ -84,7 +84,7 @@ def run_evening_summary_for(user: UserProfile, *, force: bool = False) -> bool:
         lines.append(f"Работ: <b>{day['job_count']}</b>")
         lines.append(f"Production: <b>${day['production']:,.2f}</b>")
         if day.get("tips"):
-            lines.append(f"Чаевые: <b>${day['tips']:,.2f}</b>")
+            lines.append(f"Чаевые: <b>${day['tips']:,.2f}</b> <i>(не в инвойсе)</i>")
         if day.get("fuel"):
             lines.append(f"Бензин: <b>${day['fuel']:,.2f}</b>")
         if day.get("per_diem"):
@@ -100,7 +100,7 @@ def run_evening_summary_for(user: UserProfile, *, force: bool = False) -> bool:
     week = week_totals(uid, week_start)
     work_days = count_work_days(week_start, today, key)
     lines.append(f"\n📊 Неделя: {week['job_count']} работ, ${week['production']:,.2f}")
-    lines.append(f"Чаевые за неделю: ${week.get('tips', 0):,.2f}")
+    lines.append(f"Чаевые за неделю: ${week.get('tips', 0):,.2f} (не в инвойсе ATN)")
     lines.append(f"Per diem за неделю: ${week.get('per_diem', 0):,.2f}")
     lines.append(f"Бензин за неделю: ${week.get('fuel', 0):,.2f}")
     if work_days:

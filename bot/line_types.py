@@ -1,4 +1,8 @@
-"""Line classification for job rows (production vs tips vs fuel vs per diem)."""
+"""Line classification for job rows (production vs tips vs fuel vs per diem).
+
+Tips and per diem are tracked during the week but excluded from payroll invoice
+Production/Net totals (ATN comparison). Tips remain separate personal income.
+"""
 
 from __future__ import annotations
 

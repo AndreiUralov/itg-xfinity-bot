@@ -150,7 +150,8 @@ def build_weekly_invoice(
     truck = db["deductions"]["truck"]["full_week"] if full_week else db["deductions"]["truck"]["partial_week_example"]
     meter = db["deductions"]["meter"]["per_week"]
     deposit_val = deposit or 0.0
-    net = round(production - truck - meter - deposit_val + tips + per_diem, 2)
+    # Tips are logged as lines but are personal cash — not part of ATN payroll totals.
+    net = round(production - truck - meter - deposit_val + per_diem, 2)
     lag = db["meta"].get("payment_lag_days", 13)
 
     return WeeklyInvoice(
@@ -168,8 +169,15 @@ def build_weekly_invoice(
     )
 
 
+def _partition_invoice_lines(lines: list[InvoiceLine]) -> tuple[list[InvoiceLine], list[InvoiceLine]]:
+    production_lines = [line for line in lines if line.line_type not in INCOME_LINE_TYPES]
+    tip_lines = [line for line in lines if line.line_type == LINE_TYPE_TIP]
+    return production_lines, tip_lines
+
+
 def invoice_to_text(invoice: WeeklyInvoice) -> str:
     """Plain-text export matching PDF text extraction for diff/compare."""
+    production_lines, tip_lines = _partition_invoice_lines(invoice.lines)
     rows: list[str] = []
     rows.append("\t".join(["Production", "Truck", "Meter_Charge", "DEPOSIT", ""]))
     rows.append(
@@ -186,13 +194,23 @@ def invoice_to_text(invoice: WeeklyInvoice) -> str:
     )
     rows.append("Tech Job Number Work Area Completion Date Address Job Code QTY Item Total")
 
-    for line in invoice.lines:
+    for line in production_lines:
         address = line.address.upper()
         rows.append(
             f"{line.tech} {line.job_number} {line.work_area} "
             f"{format_completion_date(line.completion_date)} {address} "
             f"{line.job_code} {line.qty} {line.item_total:.2f}\t$"
         )
+
+    if tip_lines:
+        rows.append(f"CASH TIPS (NOT IN INVOICE TOTAL) {invoice.tips:.2f}\t$")
+        for line in tip_lines:
+            address = line.address.upper()
+            rows.append(
+                f"{line.tech} {line.job_number} {line.work_area} "
+                f"{format_completion_date(line.completion_date)} {address} "
+                f"{line.job_code} {line.qty} {line.item_total:.2f}\t$"
+            )
 
     rows.append(invoice.week_label)
     rows.append("DEPOSIT")
@@ -283,9 +301,10 @@ def generate_invoice_pdf(invoice: WeeklyInvoice, output_path: Path) -> Path:
     )
 
     col_headers = [c["header"] for c in fmt["table_columns"]]
+    production_lines, tip_lines = _partition_invoice_lines(invoice.lines)
     table_data = [col_headers]
 
-    for line in invoice.lines:
+    for line in production_lines:
         address = line.address.upper() if fmt["formatting"]["address_uppercase"] else line.address
         table_data.append(
             [
@@ -320,10 +339,62 @@ def generate_invoice_pdf(invoice: WeeklyInvoice, output_path: Path) -> Path:
         summary_table,
         Spacer(1, 0.12 * inch),
         detail_table,
-        Spacer(1, 0.15 * inch),
-        Paragraph(invoice.week_label, week_style),
-        Paragraph("DEPOSIT", footer_style),
     ]
+
+    if tip_lines:
+        tip_header = ParagraphStyle(
+            "TipsHeader",
+            parent=styles["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=8,
+            spaceBefore=10,
+            spaceAfter=4,
+            textColor=colors.HexColor("#555555"),
+        )
+        story.append(
+            Paragraph(
+                f"Cash tips (not in invoice total): {format_currency(invoice.tips)} $",
+                tip_header,
+            )
+        )
+        tip_table_data = [col_headers]
+        for line in tip_lines:
+            address = line.address.upper() if fmt["formatting"]["address_uppercase"] else line.address
+            tip_table_data.append(
+                [
+                    line.tech,
+                    str(line.job_number),
+                    line.work_area,
+                    format_completion_date(line.completion_date),
+                    address,
+                    line.job_code,
+                    str(line.qty),
+                    f"{line.item_total:.2f} $",
+                ]
+            )
+        tip_table = Table(tip_table_data, colWidths=col_widths, repeatRows=1)
+        tip_table.setStyle(
+            TableStyle(
+                [
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F3F3F3")),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (6, 1), (7, -1), "RIGHT"),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#FAFAFA")]),
+                ]
+            )
+        )
+        story.append(tip_table)
+
+    story.extend(
+        [
+            Spacer(1, 0.15 * inch),
+            Paragraph(invoice.week_label, week_style),
+            Paragraph("DEPOSIT", footer_style),
+        ]
+    )
 
     doc.build(story)
     return output_path

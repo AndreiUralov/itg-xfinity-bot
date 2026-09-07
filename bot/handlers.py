@@ -639,7 +639,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "5. Проверь данные → подтверди\n"
         "6. Выбери оборудование (если нужно)\n"
         "7. Работа сохранится для недельного инвойса ATN\n\n"
-        "<b>Чаевые:</b> /tips или «💵 Чаевые» — не идут в план.\n"
+        "<b>Чаевые:</b> /tips или «💵 Чаевые» — личные, отдельной строкой; "
+        "<b>не входят</b> в Production/Net инвойса ATN.\n"
         "<b>Бензин:</b> /fuel или «⛽ Бензин» — учёт расходов, не в план.\n"
         "<b>Командировочные:</b> /perdiem или «🧳 Командировочные» — per diem, "
         "попадает в инвойс ATN. Можно за вчера: <code>/perdiem 75 вчера</code>\n\n"
@@ -681,7 +682,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     tips = totals.get("tips", 0.0)
     fuel = totals.get("fuel", 0.0)
     per_diem = totals.get("per_diem", 0.0)
-    net = round(totals["production"] - truck - meter + tips + per_diem - fuel, 2)
+    net = round(totals["production"] - truck - meter + per_diem - fuel, 2)
     work_days = count_work_days(totals['week_start'], totals['week_end'], user_settings_key(owner_telegram_id))
     goal_line = goals_progress_block(owner_telegram_id)
     extra = f"\n{goal_line}" if goal_line else ""
@@ -692,12 +693,13 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Работ: {totals['job_count']}\n"
         f"Строк: {totals['line_count']}\n"
         f"Production: <b>${totals['production']:,.2f}</b>\n"
-        f"Чаевые: <b>${tips:,.2f}</b>\n"
+        f"Чаевые: <b>${tips:,.2f}</b> <i>(отдельно, не в инвойсе)</i>\n"
         f"Командировочные: <b>${per_diem:,.2f}</b>\n"
         f"Бензин: <b>${fuel:,.2f}</b>\n"
         f"Truck: (${truck:,.2f})\n"
         f"Meter: (${meter:,.2f})\n"
-        f"≈ Net: <b>${net:,.2f}</b>{extra}",
+        f"≈ Net (payroll): <b>${net:,.2f}</b>\n"
+        f"≈ Всего с чаевыми: <b>${net + tips:,.2f}</b>{extra}",
         parse_mode="HTML",
     )
 

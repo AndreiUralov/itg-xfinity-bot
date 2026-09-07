@@ -44,6 +44,8 @@ def build_sample_invoice() -> None:
     print(f"  PDF: {pdf_path}")
     print(f"  TXT: {txt_path}")
     print(f"  Production: ${invoice.production:,.2f}")
+    if invoice.tips:
+        print(f"  Tips:       ${invoice.tips:,.2f} (not in invoice total)")
     print(f"  Net:        ${invoice.net:,.2f}")
     print(f"  Lines:      {len(invoice.lines)}")
 
