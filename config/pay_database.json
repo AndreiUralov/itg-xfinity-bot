@@ -543,6 +543,14 @@
       "note": "ATN week 2026-08-16 — Self Install subcode under New Install; not R.N.1.+E.C.5."
     },
     {
+      "job_number": 563138,
+      "work_type": "New Install",
+      "subtype": "Self Install",
+      "expected_lines": [{ "code": "R.Q.4.", "amount": 42.26 }],
+      "expected_total": 42.26,
+      "note": "ATN week 2026-08-16 — Self Install subcode under New Install; not R.N.1.+E.C.5."
+    },
+    {
       "job_number": 492264,
       "work_type": "New Install",
       "subtype": "HSD NC",
