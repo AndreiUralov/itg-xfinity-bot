@@ -85,7 +85,7 @@ from bot.users import (  # noqa: E402
     user_settings_key,
     validate_tech_label,
 )
-from bot.work_types import normalize_extracted  # noqa: E402
+from bot.work_types import apply_self_install_session, is_new_install_self, normalize_extracted  # noqa: E402
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
 from datetime_miami import miami_now  # noqa: E402
 from work_area import is_confident, resolve_work_area  # noqa: E402
@@ -262,6 +262,10 @@ def _preview_pay(
     up_install_mode: str | None = None,
 ):
     normalize_extracted(data)
+    if is_new_install_self(data):
+        equipment = []
+        addons = []
+        product_code = None
     db = _get_db()
     return calculate_job(
         db,
@@ -1054,6 +1058,8 @@ async def _start_quick_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return
 
     _resolve_work_area(extracted)
+    context.user_data["extracted"] = extracted
+    apply_self_install_session(extracted, context.user_data)
     context.user_data["step"] = "confirm"
     pay = _preview_pay(extracted)
     await update.message.reply_text(
@@ -1087,6 +1093,7 @@ async def _show_preview_or_ask_details(message_target, context, extracted: dict)
 
     _resolve_work_area(extracted)
     context.user_data["extracted"] = extracted
+    apply_self_install_session(extracted, context.user_data)
     context.user_data["step"] = "confirm"
     pay = _preview_pay(
         extracted,
@@ -1534,25 +1541,28 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if subtype not in codes:
                 codes.append(subtype)
             extracted["subtype_codes"] = codes
+        extracted = normalize_extracted(extracted)
+        apply_self_install_session(extracted, context.user_data)
         context.user_data["extracted"] = extracted
         await _show_preview_or_ask_details(query, context, extracted)
         return
 
     if data == "act:confirm":
         extracted = normalize_extracted(extracted)
+        apply_self_install_session(extracted, context.user_data)
         context.user_data["extracted"] = extracted
         rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
         if not rule:
             await query.edit_message_text("⚠️ Не удалось определить правило оплаты. Выбери тип работы.", reply_markup=work_type_keyboard())
             return
 
-        if rule.get("product_prompt") and not context.user_data.get("product_code"):
+        if not is_new_install_self(extracted) and rule.get("product_prompt") and not context.user_data.get("product_code"):
             context.user_data["step"] = "product"
             options = rule["product_prompt"]["options"]
             await query.edit_message_text("Выбери product code:", reply_markup=product_keyboard(options))
             return
 
-        if rule.get("up_base_prompt") and not context.user_data.get("up_install_mode"):
+        if not is_new_install_self(extracted) and rule.get("up_base_prompt") and not context.user_data.get("up_install_mode"):
             await _prompt_up_base(query, context)
             return
 
@@ -1562,13 +1572,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await _prompt_up_base(query, context)
             return
 
-        if pay.needs_user_input == "equipment_prompt":
+        if pay.needs_user_input == "equipment_prompt" and not is_new_install_self(extracted):
             await _prompt_up_equipment(query, context, db)
             return
 
         existing = _existing_for_job(extracted, _owner_id(context))
         if existing and existing.get("scope") == "today" and not context.user_data.get("allow_duplicate"):
-            context.user_data["pending_rule_id"] = rule["id"]
+            context.user_data["pending_rule_id"] = pay.rule_id or rule["id"]
             await query.edit_message_text(
                 _duplicate_notice(existing)
                 + f"Сохранить Job# <code>{extracted['job_number']}</code> ещё раз?",
@@ -1577,7 +1587,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        await _save_and_finish(query, context, extracted, pay, rule["id"])
+        await _save_and_finish(query, context, extracted, pay, pay.rule_id or rule["id"])
         return
 
     if data.startswith("tips:"):

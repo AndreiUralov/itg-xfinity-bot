@@ -128,6 +128,14 @@ def _build_lines(db: dict, line_defs: list[dict]) -> list[PayLine]:
     return lines
 
 
+def is_new_install_self_install(work_type: str, subtypes: list[str] | str | None) -> bool:
+    """New Install + Self Install/RQ4 subcode → R.Q.4. only (matches ATN payroll)."""
+    if work_type.strip() != "New Install":
+        return False
+    joined = " ".join(_normalize_subtype_list(subtypes))
+    return any(marker in joined for marker in ("SELF INSTALL", "SELF-INSTALL", "RQ4", "R.Q.4."))
+
+
 def find_matching_rule(db: dict, work_type: str, subtypes: list[str] | str | None) -> dict | None:
     subtype_list = _normalize_subtype_list(subtypes)
     work_type_norm = work_type.strip()
@@ -154,6 +162,16 @@ def calculate_job(
     optional_addons: list[str] | None = None,
     up_install_mode: str | None = None,
 ) -> JobPayResult:
+    if is_new_install_self_install(work_type, subtypes):
+        lines = _build_lines(db, [{"code": "R.Q.4.", "qty": 1}])
+        return JobPayResult(
+            job_number=job_number,
+            rule_id="new_install_self",
+            lines=lines,
+            confirmed=True,
+            needs_user_input=None,
+        )
+
     rule = find_matching_rule(db, work_type, subtypes)
     if rule is None:
         return JobPayResult(
