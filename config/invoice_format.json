@@ -1,6 +1,6 @@
 {
   "template_id": "atn_payroll_v1",
-  "description": "Matches ATN payroll invoice PDF layout (M_I0KF_tech.pdf). Employer: ITG.",
+  "description": "Matches ATN payroll invoice PDF layout (M_I0KF_tech.pdf). Employer: ITG. Cash tips are listed separately and excluded from Production/Net.",
   "employer_company": "ITG",
   "payroll_company": "ATN",
   "page": {
