@@ -161,6 +161,15 @@ def generate_weekly_report(
     except Exception:
         pass
 
+    truck_amount = None
+    if owner_telegram_id is not None:
+        try:
+            from bot.vehicle import resolve_invoice_truck
+
+            truck_amount = resolve_invoice_truck(owner_telegram_id, full_week=full_week, db=db)
+        except Exception:
+            truck_amount = None
+
     invoice = build_weekly_invoice(
         lines,
         week_start=week_start,
@@ -169,6 +178,7 @@ def generate_weekly_report(
         full_week=full_week,
         deposit=deposit,
         db=db,
+        truck_amount=truck_amount,
     )
 
     pdf_path = default_output_path(invoice)

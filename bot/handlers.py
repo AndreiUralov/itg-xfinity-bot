@@ -33,8 +33,12 @@ from bot.keyboards import (  # noqa: E402
     equipment_keyboard,
     format_equipment_summary,
     fuel_keyboard,
+    goal_days_keyboard,
     invoice_week_keyboard,
     main_menu_keyboard,
+    vehicle_amount_keyboard,
+    vehicle_kind_keyboard,
+    vehicle_rental_source_keyboard,
     per_diem_keyboard,
     photo_actions_keyboard,
     product_keyboard,
@@ -46,7 +50,6 @@ from bot.keyboards import (  # noqa: E402
     up_install_mode_keyboard,
     u44_prompt_keyboard,
     work_type_keyboard,
-    workday_keyboard,
 )
 from bot.jobs_manager import (  # noqa: E402
     delete_job,
@@ -66,16 +69,28 @@ from bot.settings_store import (  # noqa: E402
     clear_daily_goal,
     clear_weekly_goal,
     count_work_days,
-    get_daily_goal,
     get_effective_daily_goal,
+    get_effective_weekly_goal,
     get_goal_work_days,
-    get_weekly_goal,
-    get_work_day,
-    set_daily_goal,
+    set_daily_goal_with_weekly,
+    set_goal_work_days,
     set_weekly_goal_with_daily,
     set_work_day,
+    work_days_for_weekly_goal,
 )
 from bot.storage import save_fuel, save_job, save_per_diem, save_tip, week_bounds, week_totals  # noqa: E402
+from bot.vehicle import (  # noqa: E402
+    CREDIT,
+    KIND_LABELS_RU,
+    OWNED,
+    RENTAL_ATG,
+    RENTAL_OTHER,
+    VEHICLE_KINDS,
+    format_vehicle_line,
+    get_vehicle_settings,
+    invoice_truck_deduction,
+    set_vehicle_settings,
+)
 from bot.users import (  # noqa: E402
     UserProfile,
     ensure_legacy_migration,
@@ -172,6 +187,10 @@ async def _ensure_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Us
     )
     touch_user(profile.telegram_user_id, _chat_id(update), display_name=_display_name(update))
     _remember_user(context, profile)
+    try:
+        set_work_day(miami_now().date(), user_settings_key(profile.telegram_user_id), "working")
+    except Exception:
+        pass
     return profile
 
 
@@ -432,19 +451,49 @@ def _invoice_week_options(count: int = 4) -> list[tuple[str, date, date]]:
     return options
 
 
-def _workday_status_line(owner_telegram_id: int) -> str:
+def _goal_days_status_line(settings_key: str, week_start: date) -> str:
+    planned = get_goal_work_days(settings_key)
+    used = work_days_for_weekly_goal(week_start, settings_key)
+    line = f"📅 Рабочих дней в неделю: <b>{planned}</b>"
+    if planned == 5 and used == 6:
+        line += " · эта неделя считается как <b>6</b> (вышел сверх плана)"
+    return line
+
+
+def _goal_overview_text(owner_telegram_id: int) -> str:
+    settings_key = user_settings_key(owner_telegram_id)
     today = miami_now().date()
-    status = get_work_day(today, user_settings_key(owner_telegram_id))
-    date_label = today.strftime("%d.%m")
-    if status == "working":
-        return f"🟢 <b>На работе</b>  ·  {date_label}"
-    if status == "off":
-        return f"🏖 <b>Выходной</b>  ·  {date_label}"
-    return f"⚪ Статус не отмечен  ·  {date_label}"
+    week_start, _ = week_bounds(today)
+    week_goal = get_effective_weekly_goal(week_start, settings_key)
+    day_goal = get_effective_daily_goal(week_start, settings_key)
+    lines = ["🎯 <b>Цели</b>\n", _goal_days_status_line(settings_key, week_start), ""]
+    if not week_goal and not day_goal:
+        lines.append("Цели пока не заданы.")
+        lines.append("")
+        lines.append("Неделя: <code>/goal 1755</code> → день считается сам")
+        lines.append("День: <code>/goal day 320</code> → неделя считается сама")
+        lines.append("Дни: <code>/goal days 5</code> или кнопки ниже")
+        return "\n".join(lines)
+    if day_goal:
+        lines.append(daily_goal_progress_line(owner_telegram_id))
+    if week_goal:
+        lines.append(weekly_goal_progress_line(owner_telegram_id))
+    lines.append("\nСбросить суммы: <code>/goal off</code>")
+    return "\n".join(lines)
 
 
-def _goal_progress_line(owner_telegram_id: int) -> str:
-    return goals_progress_block(owner_telegram_id)
+def _extra_day_goal_note(owner_telegram_id: int) -> str:
+    settings_key = user_settings_key(owner_telegram_id)
+    today = miami_now().date()
+    week_start, _ = week_bounds(today)
+    if get_goal_work_days(settings_key) != 5:
+        return ""
+    if work_days_for_weekly_goal(week_start, settings_key) != 6:
+        return ""
+    weekly = get_effective_weekly_goal(week_start, settings_key)
+    if not weekly:
+        return ""
+    return f"\n🎯 6-й рабочий день — недельная цель пересчитана: <b>${weekly:,.2f}</b>"
 
 
 def _format_stats_block(owner_telegram_id: int) -> str:
@@ -454,7 +503,7 @@ def _format_stats_block(owner_telegram_id: int) -> str:
     work_days = count_work_days(week['week_start'], today, user_settings_key(owner_telegram_id))
     week_range = _format_week_range(week["week_start"], week["week_end"])
 
-    lines = [_workday_status_line(owner_telegram_id), ""]
+    lines = []
 
     lines.append(
         f"📈 <b>Сегодня</b>  ·  {day['job_count']} {_jobs_word(day['job_count'])}  ·  "
@@ -484,10 +533,16 @@ def _format_stats_block(owner_telegram_id: int) -> str:
         f"🧳 ${week.get('per_diem', 0):,.2f}"
     )
 
-    goal_block = _goal_progress_line(owner_telegram_id)
+    goal_block = goals_progress_block(owner_telegram_id)
     if goal_block:
         lines.append("")
         lines.append(goal_block)
+
+    vehicle = get_vehicle_settings(owner_telegram_id)
+    lines.append("")
+    lines.append(format_vehicle_line(vehicle))
+    if not vehicle.configured:
+        lines.append("   изменить: /car")
     return "\n".join(lines)
 
 
@@ -497,10 +552,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     _reset_session(context)
     _remember_user(context, profile)
+    extra = _extra_day_goal_note(profile.telegram_user_id)
     await update.message.reply_text(
         f"👋 <b>ITG Job Tracker</b>\n"
         f"<i>Подпись в инвойсе: {profile.tech_id}</i>\n\n"
-        f"{_format_stats_block(profile.telegram_user_id)}",
+        f"{_format_stats_block(profile.telegram_user_id)}{extra}",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
     )
@@ -512,11 +568,17 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     args = (update.message.text or "").split()[1:]
     if not args:
+        vehicle = get_vehicle_settings(profile.telegram_user_id)
+        days = get_goal_work_days(user_settings_key(profile.telegram_user_id))
         await update.message.reply_text(
             f"👤 <b>Профиль</b>\n"
             f"Подпись в инвойсе: <code>{profile.tech_id}</code>\n"
-            f"Имя: {profile.display_name or '—'}\n\n"
-            f"Сменить подпись: <code>/setup I0KF</code>",
+            f"Имя: {profile.display_name or '—'}\n"
+            f"📅 Рабочих дней в неделю: <b>{days}</b>\n"
+            f"{format_vehicle_line(vehicle)}\n\n"
+            f"Сменить подпись: <code>/setup I0KF</code>\n"
+            f"Дни: <code>/goal days 5</code> или <code>/goal days 6</code>\n"
+            f"Автомобиль: /car",
             parse_mode="HTML",
         )
         return
@@ -532,28 +594,69 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-async def cmd_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    profile = await _ensure_user(update, context)
-    if not profile:
-        return
-    today = miami_now().date()
-    set_work_day(today, user_settings_key(profile.telegram_user_id), "working")
-    await update.message.reply_text(
-        f"🟢 Отмечено: <b>на работе</b> ({today.strftime('%d.%m.%Y')})\n\n"
-        f"{_format_stats_block(profile.telegram_user_id)}",
+def _vehicle_menu_text(owner_telegram_id: int) -> str:
+    settings = get_vehicle_settings(owner_telegram_id)
+    return (
+        "🚗 <b>Автомобиль</b>\n\n"
+        f"{format_vehicle_line(settings)}\n\n"
+        "Настраивается один раз, потом применяется каждую неделю.\n"
+        "В инвойсе ATN вычитается <b>только аренда ATG</b>. "
+        "Своя машина, кредит и аренда не у ATG в сравнении с ATN не участвуют.\n\n"
+        "Выбери вариант:"
+    )
+
+
+async def _save_vehicle_choice(target, context: ContextTypes.DEFAULT_TYPE, kind: str, amount: float = 0.0) -> None:
+    settings = set_vehicle_settings(_owner_id(context), kind, amount)
+    context.user_data.pop("step", None)
+    context.user_data.pop("vehicle_pending_kind", None)
+    await _respond(
+        target,
+        "✅ <b>Сохранено</b>\n\n"
+        f"{format_vehicle_line(settings)}\n\n"
+        "Дальше применяется автоматически. Изменить: /car",
         parse_mode="HTML",
     )
 
 
-async def cmd_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _prompt_vehicle_amount(query, context: ContextTypes.DEFAULT_TYPE, kind: str) -> None:
+    context.user_data["vehicle_pending_kind"] = kind
+    context.user_data["step"] = "pick_vehicle_amount"
+    if kind == RENTAL_ATG:
+        text = (
+            "🔑 <b>Аренда ATG</b>\n\n"
+            "Сколько в неделю вычитает компания?\n"
+            "Обычно <b>$150</b>."
+        )
+        markup = vehicle_amount_keyboard(default_atg=True)
+    elif kind == RENTAL_OTHER:
+        text = (
+            "🔑 <b>Аренда не у ATG</b>\n\n"
+            "Сколько платишь в неделю?\n"
+            "<i>В инвойс ATN не попадает — при сравнении не вычитается.</i>"
+        )
+        markup = vehicle_amount_keyboard()
+    else:
+        text = (
+            "💳 <b>Кредит</b>\n\n"
+            "Сколько платишь в неделю за свой автомобиль?\n"
+            "<i>Личный расход — в инвойс ATN не попадает.</i>"
+        )
+        markup = vehicle_amount_keyboard()
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def cmd_car(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     profile = await _ensure_user(update, context)
     if not profile:
         return
-    today = miami_now().date()
-    set_work_day(today, user_settings_key(profile.telegram_user_id), "off")
+    _reset_session(context)
+    _remember_user(context, profile)
+    context.user_data["step"] = "pick_vehicle"
     await update.message.reply_text(
-        f"🏖 Отмечено: <b>выходной</b> ({today.strftime('%d.%m.%Y')})",
+        _vehicle_menu_text(profile.telegram_user_id),
         parse_mode="HTML",
+        reply_markup=vehicle_kind_keyboard(),
     )
 
 
@@ -564,66 +667,89 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     owner_telegram_id = profile.telegram_user_id
     settings_key = user_settings_key(owner_telegram_id)
     today = miami_now().date()
-    week_start, week_end = week_bounds(today)
+    week_start, _week_end = week_bounds(today)
     parts = (update.message.text or "").split()
     args = parts[1:]
 
     if not args:
-        week_goal = get_weekly_goal(week_start, user_settings_key(owner_telegram_id))
-        day_goal = get_effective_daily_goal(week_start, user_settings_key(owner_telegram_id))
-        if not week_goal and not day_goal:
-            await update.message.reply_text(
-                f"🎯 Цели не заданы.\n\n"
-                f"Неделя: <code>/goal 1755</code> (авто-день ≈ $351 при 5 днях)\n"
-                f"День: <code>/goal day 351</code>",
-                parse_mode="HTML",
-            )
-            return
-        lines = ["🎯 <b>Цели</b>\n"]
-        if day_goal:
-            lines.append(daily_goal_progress_line(owner_telegram_id))
-        if week_goal:
-            lines.append(weekly_goal_progress_line(owner_telegram_id))
-        lines.append("\nСбросить всё: <code>/goal off</code>")
-        lines.append("Только день: <code>/goal day off</code>")
-        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        await update.message.reply_text(
+            _goal_overview_text(owner_telegram_id),
+            parse_mode="HTML",
+            reply_markup=goal_days_keyboard(get_goal_work_days(settings_key)),
+        )
         return
 
     if args[0].lower() in ("off", "clear", "сброс", "0"):
-        clear_weekly_goal(week_start, user_settings_key(owner_telegram_id))
-        clear_daily_goal(user_settings_key(owner_telegram_id))
+        clear_weekly_goal(week_start, settings_key)
+        clear_daily_goal(settings_key)
         await update.message.reply_text("🎯 Недельная и дневная цели сброшены.")
+        return
+
+    if args[0].lower() in ("days", "дни", "days5", "workdays"):
+        if len(args) >= 2:
+            try:
+                days_value = int(args[1])
+            except ValueError:
+                await update.message.reply_text("⚠️ Пример: <code>/goal days 5</code> или <code>/goal days 6</code>", parse_mode="HTML")
+                return
+            if days_value not in (5, 6):
+                await update.message.reply_text("⚠️ Можно 5 или 6 рабочих дней.")
+                return
+            set_goal_work_days(settings_key, days_value)
+        await update.message.reply_text(
+            _goal_overview_text(owner_telegram_id),
+            parse_mode="HTML",
+            reply_markup=goal_days_keyboard(get_goal_work_days(settings_key)),
+        )
         return
 
     if args[0].lower() in ("day", "день", "d"):
         if len(args) < 2:
-            day_goal = get_effective_daily_goal(week_start, user_settings_key(owner_telegram_id))
+            day_goal = get_effective_daily_goal(week_start, settings_key)
+            week_goal = get_effective_weekly_goal(week_start, settings_key)
             if not day_goal:
                 await update.message.reply_text(
-                    "Дневная цель не задана.\nПример: <code>/goal day 351</code>",
+                    "Дневная цель не задана.\nПример: <code>/goal day 320</code>",
                     parse_mode="HTML",
                 )
                 return
-            await update.message.reply_text(
-                f"📍 Дневная цель: <b>${day_goal:,.2f}</b>\n{daily_goal_progress_line(owner_telegram_id)}",
-                parse_mode="HTML",
-            )
+            lines = [f"📍 Дневная цель: <b>${day_goal:,.2f}</b>"]
+            if week_goal:
+                days = work_days_for_weekly_goal(week_start, settings_key)
+                lines.append(f"🎯 Неделя: <b>${week_goal:,.2f}</b> ({days} раб. дн.)")
+            lines.append(daily_goal_progress_line(owner_telegram_id))
+            week_line = weekly_goal_progress_line(owner_telegram_id)
+            if week_line:
+                lines.append(week_line)
+            await update.message.reply_text("\n".join(lines), parse_mode="HTML")
             return
         if args[1].lower() in ("off", "clear", "сброс", "0"):
-            clear_daily_goal(user_settings_key(owner_telegram_id))
+            clear_daily_goal(settings_key)
             await update.message.reply_text("📍 Дневная цель сброшена.")
             return
         try:
             amount = float(args[1].replace("$", "").replace(",", ""))
         except ValueError:
-            await update.message.reply_text("⚠️ Пример: <code>/goal day 351</code>", parse_mode="HTML")
+            await update.message.reply_text("⚠️ Пример: <code>/goal day 320</code>", parse_mode="HTML")
             return
         if amount <= 0:
             await update.message.reply_text("⚠️ Цель должна быть больше 0.")
             return
-        set_daily_goal(user_settings_key(owner_telegram_id), amount)
+        work_days = None
+        if len(args) >= 3:
+            try:
+                work_days = int(args[2])
+            except ValueError:
+                pass
+        set_daily_goal_with_weekly(week_start, settings_key, amount, work_days=work_days)
+        weekly = get_effective_weekly_goal(week_start, settings_key) or 0.0
+        days = work_days_for_weekly_goal(week_start, settings_key)
+        week_line = weekly_goal_progress_line(owner_telegram_id)
         await update.message.reply_text(
-            f"📍 Дневная цель: <b>${amount:,.2f}</b>\n{daily_goal_progress_line(owner_telegram_id)}",
+            f"📍 Дневная цель: <b>${amount:,.2f}</b>\n"
+            f"🎯 Неделя: <b>${weekly:,.2f}</b> ({days} раб. дн.)\n"
+            f"{daily_goal_progress_line(owner_telegram_id)}"
+            + (f"\n{week_line}" if week_line else ""),
             parse_mode="HTML",
         )
         return
@@ -632,7 +758,7 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         amount = float(args[0].replace("$", "").replace(",", ""))
     except ValueError:
         await update.message.reply_text(
-            "⚠️ Примеры:\n<code>/goal 1755</code>\n<code>/goal day 351</code>",
+            "⚠️ Примеры:\n<code>/goal 1755</code>\n<code>/goal day 320</code>",
             parse_mode="HTML",
         )
         return
@@ -648,46 +774,15 @@ async def cmd_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except ValueError:
             pass
 
-    daily = set_weekly_goal_with_daily(week_start, user_settings_key(owner_telegram_id), amount, work_days=work_days)
-    days = get_goal_work_days(user_settings_key(owner_telegram_id))
-    week = week_totals(owner_telegram_id, week_start)
-    pct = min(100, round(week["production"] / amount * 100))
+    daily = set_weekly_goal_with_daily(week_start, settings_key, amount, work_days=work_days)
+    weekly = get_effective_weekly_goal(week_start, settings_key) or amount
+    days = work_days_for_weekly_goal(week_start, settings_key)
+    week_line = weekly_goal_progress_line(owner_telegram_id)
     await update.message.reply_text(
-        f"🎯 Цель на неделю: <b>${amount:,.2f}</b>\n"
-        f"📍 Дневная цель: <b>${daily:,.2f}</b> ({days} раб. дн.)\n"
-        f"Уже за неделю: ${week['production']:,.2f} ({pct}%)\n"
-        f"{daily_goal_progress_line(owner_telegram_id)}",
-        parse_mode="HTML",
-    )
-
-
-async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update.effective_user.id):
-        return await _deny(update)
-    await update.message.reply_text(
-        "📖 <b>Как пользоваться</b>\n\n"
-        "1. Бот узнаёт тебя по Telegram — ничего привязывать не нужно\n"
-        "2. Подпись в инвойсе (необязательно): <code>/setup I0KF</code>\n"
-        "3. Сделай скрин(ы) работы в Tech360\n"
-        "4. Отправь в бот (альбомом или по одному)\n"
-        "5. Проверь данные → подтверди\n"
-        "6. Выбери оборудование (если нужно)\n"
-        "7. Работа сохранится для недельного инвойса ATN\n\n"
-        "<b>Чаевые:</b> /tips или «💵 Чаевые» — личные, отдельной строкой; "
-        "<b>не входят</b> в Production/Net инвойса ATN.\n"
-        "<b>Бензин:</b> /fuel или «⛽ Бензин» — учёт расходов, не в план.\n"
-        "<b>Командировочные:</b> /perdiem или «🧳 Командировочные» — per diem, "
-        "попадает в инвойс ATN. Можно за вчера: <code>/perdiem 75 вчера</code>\n\n"
-        "<b>Быстрый ввод без скрина:</b>\n"
-        "<code>549110 trouble</code> · <code>508836 service</code>\n\n"
-        "/on — на работе · /off — выходной\n"
-        "/goal 1755 — цель на неделю (дневная авто)\n"
-        "/today — посмотреть сегодняшние работы, удалить или пересчитать при ошибке.\n"
-        "/invoice — PDF за текущую или прошлые 3 недели.\n\n"
-        "🌅 Утром (7:00) — напоминание отметить рабочий день.\n"
-        "🌙 Вечером (21:00) — итог дня.\n"
-        "📋 По понедельникам (7:00) — PDF за прошлую неделю.\n"
-        "💾 По воскресеньям (21:00) — бэкап PDF недели.",
+        f"🎯 Цель на неделю: <b>${weekly:,.2f}</b> ({days} раб. дн.)\n"
+        f"📍 Дневная цель: <b>${daily:,.2f}</b>\n"
+        f"{daily_goal_progress_line(owner_telegram_id)}"
+        + (f"\n{week_line}" if week_line else ""),
         parse_mode="HTML",
     )
 
@@ -708,10 +803,10 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not profile:
         return
     owner_telegram_id = profile.telegram_user_id
-    settings_key = user_settings_key(owner_telegram_id)
     db = _get_db()
     totals = week_totals(owner_telegram_id)
-    truck = db["deductions"]["truck"]["full_week"]
+    vehicle = get_vehicle_settings(owner_telegram_id)
+    truck = invoice_truck_deduction(vehicle, full_week=True, db=db)
     meter = db["deductions"]["meter"]["per_week"]
     tips = totals.get("tips", 0.0)
     fuel = totals.get("fuel", 0.0)
@@ -722,6 +817,16 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     extra = f"\n{goal_line}" if goal_line else ""
     if work_days:
         extra += f"\nРабочих дней: {work_days}"
+    extra += f"\n{format_vehicle_line(vehicle)}"
+    if truck:
+        truck_line = f"Truck (аренда ATG): (${truck:,.2f})\n"
+    elif vehicle.personal_weekly:
+        truck_line = (
+            f"Авто ({KIND_LABELS_RU.get(vehicle.kind, vehicle.kind)}): "
+            f"${vehicle.personal_weekly:,.2f}/нед <i>(не в инвойсе ATN)</i>\n"
+        )
+    else:
+        truck_line = "Truck: — <i>(не в инвойсе ATN)</i>\n"
     await update.message.reply_text(
         f"📊 <b>Неделя {totals['week_start']} — {totals['week_end']}</b>\n\n"
         f"Работ: {totals['job_count']}\n"
@@ -730,7 +835,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Чаевые: <b>${tips:,.2f}</b> <i>(отдельно, не в инвойсе)</i>\n"
         f"Командировочные: <b>${per_diem:,.2f}</b>\n"
         f"Бензин: <b>${fuel:,.2f}</b>\n"
-        f"Truck: (${truck:,.2f})\n"
+        f"{truck_line}"
         f"Meter: (${meter:,.2f})\n"
         f"≈ Net (payroll): <b>${net:,.2f}</b>\n"
         f"≈ Всего с чаевыми: <b>${net + tips:,.2f}</b>{extra}",
@@ -1237,6 +1342,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
+    if step == "await_vehicle_amount" or step == "pick_vehicle_amount":
+        kind = context.user_data.get("vehicle_pending_kind")
+        if kind not in VEHICLE_KINDS or kind == OWNED:
+            await update.message.reply_text("Сначала выбери тип автомобиля: /car")
+            return
+        vehicle_amount = _parse_tip_amount(text)
+        if vehicle_amount is None:
+            await update.message.reply_text(
+                "⚠️ Введи сумму в неделю числом, напр. <code>150</code> или <code>175.00</code>",
+                parse_mode="HTML",
+            )
+            return
+        await _save_vehicle_choice(update.message, context, kind, vehicle_amount)
+        return
+
     if not step:
         if text == TIPS_BUTTON_TEXT:
             await cmd_tips(update, context)
@@ -1403,6 +1523,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     extracted: dict = context.user_data.get("extracted", empty_extraction())
     db = _get_db()
 
+    if data.startswith("goal:days:"):
+        try:
+            days_value = int(data.split(":")[-1])
+        except ValueError:
+            await query.answer("Неверный выбор", show_alert=True)
+            return
+        if days_value not in (5, 6):
+            await query.answer("Можно 5 или 6 дней", show_alert=True)
+            return
+        set_goal_work_days(settings_key, days_value)
+        await query.edit_message_text(
+            _goal_overview_text(owner_telegram_id),
+            parse_mode="HTML",
+            reply_markup=goal_days_keyboard(get_goal_work_days(settings_key)),
+        )
+        return
+
     if data.startswith("invoice:"):
         action = data[8:]
         if action == "cancel":
@@ -1430,6 +1567,70 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             week_end=week_end,
             week_label=week_label,
         )
+        return
+
+    if data.startswith("car:"):
+        action = data[4:]
+        if action == "cancel":
+            context.user_data.pop("step", None)
+            context.user_data.pop("vehicle_pending_kind", None)
+            await query.edit_message_text("❌ Отменено.")
+            return
+        if action == "menu":
+            context.user_data.pop("vehicle_pending_kind", None)
+            context.user_data["step"] = "pick_vehicle"
+            await query.edit_message_text(
+                _vehicle_menu_text(owner_telegram_id),
+                parse_mode="HTML",
+                reply_markup=vehicle_kind_keyboard(),
+            )
+            return
+        if action == "owned":
+            await _save_vehicle_choice(query, context, OWNED, 0)
+            return
+        if action == "rental":
+            context.user_data["step"] = "pick_vehicle_rental"
+            await query.edit_message_text(
+                "🔑 <b>Аренда</b>\n\n"
+                "Машина арендована у ATG?\n"
+                "Только аренда ATG попадает в инвойс ATN как Truck.",
+                parse_mode="HTML",
+                reply_markup=vehicle_rental_source_keyboard(),
+            )
+            return
+        if action == "credit":
+            await _prompt_vehicle_amount(query, context, CREDIT)
+            return
+        if action == "rental_atg":
+            await _prompt_vehicle_amount(query, context, RENTAL_ATG)
+            return
+        if action == "rental_other":
+            await _prompt_vehicle_amount(query, context, RENTAL_OTHER)
+            return
+        if action == "custom":
+            kind = context.user_data.get("vehicle_pending_kind")
+            if kind not in VEHICLE_KINDS or kind == OWNED:
+                await query.answer("Сначала выбери тип автомобиля", show_alert=True)
+                return
+            context.user_data["step"] = "await_vehicle_amount"
+            await query.edit_message_text("✏️ Жду сумму в неделю…")
+            await query.message.reply_text(
+                "Введи сумму в неделю ($), напр. <code>150</code> или <code>175.00</code>",
+                parse_mode="HTML",
+            )
+            return
+        if action.startswith("amt:"):
+            kind = context.user_data.get("vehicle_pending_kind")
+            if kind not in VEHICLE_KINDS or kind == OWNED:
+                await query.answer("Сначала выбери тип автомобиля", show_alert=True)
+                return
+            amount = _parse_tip_amount(action[4:])
+            if amount is None:
+                await query.answer("Неверная сумма", show_alert=True)
+                return
+            await _save_vehicle_choice(query, context, kind, amount)
+            return
+        await query.answer("Неверный выбор", show_alert=True)
         return
 
     if data == "act:cancel":
@@ -1475,24 +1676,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             context.user_data.get("optional_addons"),
         )
         await _finish_or_prompt_u44(query, context, extracted, pay, rule_id)
-        return
-
-    if data == "work:on":
-        today = miami_now().date()
-        set_work_day(today, user_settings_key(owner_telegram_id), "working")
-        await query.edit_message_text(
-            f"🟢 <b>На работе</b> — {today.strftime('%d.%m.%Y')}\n\n{_format_stats_block(owner_telegram_id)}",
-            parse_mode="HTML",
-        )
-        return
-
-    if data == "work:off":
-        today = miami_now().date()
-        set_work_day(today, user_settings_key(owner_telegram_id), "off")
-        await query.edit_message_text(
-            f"🏖 <b>Выходной</b> — {today.strftime('%d.%m.%Y')}",
-            parse_mode="HTML",
-        )
         return
 
     if data == "act:wait":

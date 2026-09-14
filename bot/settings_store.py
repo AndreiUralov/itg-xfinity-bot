@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -229,13 +229,25 @@ def _goal_work_days_key(tech: str) -> str:
 
 def get_goal_work_days(tech: str) -> int:
     raw = get_setting(_goal_work_days_key(tech))
-    if raw and raw.isdigit():
-        return max(1, int(raw))
+    if raw and raw.isdigit() and int(raw) >= 6:
+        return 6
     return 5
 
 
-def set_goal_work_days(tech: str, days: int) -> None:
-    set_setting(_goal_work_days_key(tech), str(max(1, days)))
+def set_goal_work_days(tech: str, days: int) -> int:
+    value = 6 if int(days) >= 6 else 5
+    set_setting(_goal_work_days_key(tech), str(value))
+    return value
+
+
+def work_days_for_weekly_goal(week_start: date, tech: str, *, week_end: date | None = None) -> int:
+    """Planned 5/6 days; a 5-day tech who actually works a 6th day this week gets 6."""
+    planned = get_goal_work_days(tech)
+    if planned >= 6:
+        return 6
+    end = week_end or (week_start + timedelta(days=6))
+    actual = count_work_days(week_start, end, tech)
+    return 6 if actual >= 6 else 5
 
 
 def set_daily_goal(tech: str, amount: float) -> None:
@@ -273,6 +285,14 @@ def get_effective_daily_goal(week_start: date, tech: str) -> float | None:
     return round(weekly / get_goal_work_days(tech), 2)
 
 
+def get_effective_weekly_goal(week_start: date, tech: str) -> float | None:
+    """Daily × this week's work-day multiplier (5, or 6 if they showed up extra)."""
+    daily = get_effective_daily_goal(week_start, tech)
+    if daily is None:
+        return None
+    return round(daily * work_days_for_weekly_goal(week_start, tech), 2)
+
+
 def set_weekly_goal_with_daily(week_start: date, tech: str, amount: float, *, work_days: int | None = None) -> float:
     """Set weekly goal and auto-calculate daily goal. Returns daily amount."""
     if work_days is not None:
@@ -282,6 +302,17 @@ def set_weekly_goal_with_daily(week_start: date, tech: str, amount: float, *, wo
     daily = round(amount / days, 2)
     set_daily_goal(tech, daily)
     return daily
+
+
+def set_daily_goal_with_weekly(week_start: date, tech: str, amount: float, *, work_days: int | None = None) -> float:
+    """Set daily goal and auto-calculate weekly goal. Returns weekly amount."""
+    if work_days is not None:
+        set_goal_work_days(tech, work_days)
+    set_daily_goal(tech, amount)
+    days = get_goal_work_days(tech)
+    weekly = round(amount * days, 2)
+    set_weekly_goal(week_start, tech, weekly)
+    return weekly
 
 
 def task_already_ran(task_name: str, run_date: date, *, tech_id: str | None = None) -> bool:

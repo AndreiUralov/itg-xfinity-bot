@@ -15,17 +15,6 @@ WORK_TYPES = [
 ]
 
 
-def workday_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("🟢 На работе", callback_data="work:on"),
-                InlineKeyboardButton("🏖 Выходной", callback_data="work:off"),
-            ],
-        ]
-    )
-
-
 def photo_actions_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
@@ -122,6 +111,44 @@ def _invoice_week_button_range(week_start: date, week_end: date) -> str:
     )
 
 
+def vehicle_kind_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🛠 Своя машина", callback_data="car:owned")],
+            [InlineKeyboardButton("🔑 Аренда", callback_data="car:rental")],
+            [InlineKeyboardButton("💳 Кредит", callback_data="car:credit")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="car:cancel")],
+        ]
+    )
+
+
+def vehicle_rental_source_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("ATG — вычет в инвойсе ATN", callback_data="car:rental_atg")],
+            [InlineKeyboardButton("Не ATG — не в инвойсе", callback_data="car:rental_other")],
+            [InlineKeyboardButton("« Назад", callback_data="car:menu")],
+        ]
+    )
+
+
+def vehicle_amount_keyboard(*, default_atg: bool = False) -> InlineKeyboardMarkup:
+    amounts = [75, 100, 125, 150, 175, 200, 250]
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for amount in amounts:
+        mark = "✓ " if default_atg and amount == 150 else ""
+        row.append(InlineKeyboardButton(f"{mark}${amount}", callback_data=f"car:amt:{amount}"))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("✏️ Другая сумма", callback_data="car:custom")])
+    rows.append([InlineKeyboardButton("« Назад", callback_data="car:menu")])
+    return InlineKeyboardMarkup(rows)
+
+
 def invoice_week_keyboard(weeks: list[tuple[str, date, date]]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for index, (label, week_start, week_end) in enumerate(weeks):
@@ -136,6 +163,19 @@ def invoice_week_keyboard(weeks: list[tuple[str, date, date]]) -> InlineKeyboard
         )
     rows.append([InlineKeyboardButton("❌ Отмена", callback_data="invoice:cancel")])
     return InlineKeyboardMarkup(rows)
+
+
+def goal_days_keyboard(current: int = 5) -> InlineKeyboardMarkup:
+    five_mark = "✓ " if current == 5 else ""
+    six_mark = "✓ " if current == 6 else ""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(f"{five_mark}5 дней", callback_data="goal:days:5"),
+                InlineKeyboardButton(f"{six_mark}6 дней", callback_data="goal:days:6"),
+            ]
+        ]
+    )
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:

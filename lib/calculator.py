@@ -264,6 +264,7 @@ def calculate_weekly(
     week_start: date | None = None,
     full_week: bool = True,
     deposit: float = 0.0,
+    truck_amount: float | None = None,
 ) -> WeeklySummary:
     if week_start is None:
         week_start, week_end = week_bounds(date.today())
@@ -271,7 +272,10 @@ def calculate_weekly(
         week_end = week_start + timedelta(days=6)
 
     production = round(sum(job.total for job in job_results), 2)
-    truck = db["deductions"]["truck"]["full_week"] if full_week else db["deductions"]["truck"]["partial_week_example"]
+    if truck_amount is None:
+        truck = db["deductions"]["truck"]["full_week"] if full_week else db["deductions"]["truck"]["partial_week_example"]
+    else:
+        truck = round(float(truck_amount), 2)
     meter = db["deductions"]["meter"]["per_week"]
     net = round(production - truck - meter - deposit, 2)
     line_count = sum(len(job.lines) for job in job_results)

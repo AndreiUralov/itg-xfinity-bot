@@ -23,12 +23,10 @@ sys.path.insert(0, str(ROOT))
 from bot.config import TELEGRAM_BOT_TOKEN, WEBHOOK_URL
 from bot.handlers import (
     cmd_cancel,
+    cmd_car,
     cmd_fuel,
     cmd_goal,
-    cmd_help,
     cmd_invoice,
-    cmd_off,
-    cmd_on,
     cmd_perdiem,
     cmd_setup,
     cmd_start,
@@ -50,8 +48,7 @@ logger = logging.getLogger("itg.bot")
 BOT_COMMANDS = [
     BotCommand("start", "Сводка за день и неделю"),
     BotCommand("setup", "Подпись в инвойсе (Tech ID)"),
-    BotCommand("on", "На работе сегодня"),
-    BotCommand("off", "Выходной сегодня"),
+    BotCommand("car", "Автомобиль: свой / аренда / кредит"),
     BotCommand("goal", "Цель на день и неделю в $"),
     BotCommand("today", "Работы за сегодня — изменить / удалить"),
     BotCommand("tips", "Добавить чаевые (не в план)"),
@@ -60,7 +57,6 @@ BOT_COMMANDS = [
     BotCommand("week", "Итог текущей недели"),
     BotCommand("invoice", "PDF инвойс ATN — выбор недели"),
     BotCommand("cancel", "Отменить текущую работу"),
-    BotCommand("help", "Как пользоваться ботом"),
 ]
 
 ALLOWED_UPDATES = ["message", "callback_query"]
@@ -122,10 +118,8 @@ def _build_application(*, webhook: bool) -> Application:
     app.add_handler(TypeHandler(Update, _maybe_run_scheduled_tasks), group=-1)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("setup", cmd_setup))
-    app.add_handler(CommandHandler("on", cmd_on))
-    app.add_handler(CommandHandler("off", cmd_off))
+    app.add_handler(CommandHandler("car", cmd_car))
     app.add_handler(CommandHandler("goal", cmd_goal))
-    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("today", cmd_today))

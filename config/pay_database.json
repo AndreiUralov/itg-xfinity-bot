@@ -27,6 +27,7 @@
       "full_week": 150.0,
       "partial_week_example": 42.86,
       "partial_week_note": "Prorated when not a full work week; exact formula not confirmed — use full_week for complete weeks",
+      "per_user_note": "Invoice Truck deduction applies only when the tech has ATG rental. Amount is per-user (/car); own/credit/non-ATG rental are not subtracted on ATN compare.",
       "confirmed": true
     },
     "meter": {

@@ -91,6 +91,13 @@ def format_deposit(amount: float | None) -> str:
     return f"{amount:,.2f}"
 
 
+def format_truck(amount: float) -> str:
+    """ATG rental shows as (150.00); own/credit/other rental is omitted so ATN compare stays clean."""
+    if not amount:
+        return "-"
+    return format_currency(amount, negative_paren=True)
+
+
 def sort_lines(lines: list[InvoiceLine]) -> list[InvoiceLine]:
     def sort_key(line: InvoiceLine) -> tuple:
         cd = line.completion_date
@@ -126,6 +133,11 @@ def payment_date_for_week(week_end: date, lag_days: int = 13) -> date:
     return week_end + timedelta(days=lag_days)
 
 
+def _default_truck_amount(db: dict, full_week: bool) -> float:
+    truck_cfg = db["deductions"]["truck"]
+    return truck_cfg["full_week"] if full_week else truck_cfg["partial_week_example"]
+
+
 def build_weekly_invoice(
     lines: list[InvoiceLine],
     *,
@@ -135,6 +147,7 @@ def build_weekly_invoice(
     full_week: bool = True,
     deposit: float | None = None,
     db: dict | None = None,
+    truck_amount: float | None = None,
 ) -> WeeklyInvoice:
     db = db or load_json(DB_PATH)
     sorted_lines = sort_lines(lines)
@@ -147,7 +160,7 @@ def build_weekly_invoice(
         sum(line.item_total for line in sorted_lines if line.line_type == LINE_TYPE_PER_DIEM),
         2,
     )
-    truck = db["deductions"]["truck"]["full_week"] if full_week else db["deductions"]["truck"]["partial_week_example"]
+    truck = _default_truck_amount(db, full_week) if truck_amount is None else round(float(truck_amount), 2)
     meter = db["deductions"]["meter"]["per_week"]
     deposit_val = deposit or 0.0
     # Tips are logged as lines but are personal cash — not part of ATN payroll totals.
@@ -184,7 +197,7 @@ def invoice_to_text(invoice: WeeklyInvoice) -> str:
         "\t".join(
             [
                 format_currency(invoice.production),
-                format_currency(invoice.truck, negative_paren=True),
+                format_truck(invoice.truck),
                 format_currency(invoice.meter, negative_paren=True),
                 format_deposit(invoice.deposit),
                 format_currency(invoice.net),
@@ -263,7 +276,7 @@ def generate_invoice_pdf(invoice: WeeklyInvoice, output_path: Path) -> Path:
             ["Production", "Truck", "Meter_Charge", "DEPOSIT", ""],
             [
                 format_currency(invoice.production) + " $",
-                format_currency(invoice.truck, negative_paren=True) + " $",
+                format_truck(invoice.truck) + (" $" if invoice.truck else ""),
                 format_currency(invoice.meter, negative_paren=True) + " $",
                 format_deposit(invoice.deposit) + (" $" if invoice.deposit else ""),
                 format_currency(invoice.net) + " $",

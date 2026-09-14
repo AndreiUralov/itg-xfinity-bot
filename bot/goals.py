@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from bot.jobs_manager import today_totals
-from bot.settings_store import get_effective_daily_goal, get_goal_work_days, get_weekly_goal
+from bot.settings_store import (
+    get_effective_daily_goal,
+    get_effective_weekly_goal,
+    get_goal_work_days,
+    work_days_for_weekly_goal,
+)
 from bot.storage import week_bounds, week_totals
 from bot.users import user_settings_key
 from datetime_miami import miami_now
@@ -35,19 +40,24 @@ def weekly_goal_progress_line(owner_telegram_id: int) -> str:
     settings_key = user_settings_key(owner_telegram_id)
     today = miami_now().date()
     week_start, _ = week_bounds(today)
-    goal = get_weekly_goal(week_start, settings_key)
+    goal = get_effective_weekly_goal(week_start, settings_key)
     if not goal:
         return ""
     week = week_totals(owner_telegram_id, week_start)
     pct = min(100, round(week["production"] / goal * 100)) if goal else 0
     remaining = max(0.0, goal - week["production"])
+    days = work_days_for_weekly_goal(week_start, settings_key)
+    planned = get_goal_work_days(settings_key)
+    days_label = f"{days} дн."
+    if planned == 5 and days == 6:
+        days_label = "6 дн. · +выход"
     if week["production"] >= goal:
         return (
-            f"🎯 <b>Неделя:</b> ${week['production']:,.2f} / ${goal:,.2f} ({pct}%) · "
+            f"🎯 <b>Неделя</b> ({days_label}): ${week['production']:,.2f} / ${goal:,.2f} ({pct}%) · "
             f"✅ цель выполнена"
         )
     return (
-        f"🎯 <b>Неделя:</b> ${week['production']:,.2f} / ${goal:,.2f} ({pct}%) · "
+        f"🎯 <b>Неделя</b> ({days_label}): ${week['production']:,.2f} / ${goal:,.2f} ({pct}%) · "
         f"осталось <b>${remaining:,.2f}</b>"
     )
 
