@@ -211,7 +211,14 @@ def calculate_job(
         lines.extend(_build_lines(db, rule["base_lines"]))
 
     if rule.get("product_prompt"):
-        code = product_code or rule["product_prompt"]["options"][0]["code"]
+        if product_code:
+            code = product_code
+        else:
+            options = rule["product_prompt"]["options"]
+            code = next((opt["code"] for opt in options if opt.get("default")), options[0]["code"])
+            subtype_blob = " ".join(_normalize_subtype_list(subtypes))
+            if any(token in subtype_blob for token in ("HSD NC", "HSD RC")) and "SELF INSTALL" not in subtype_blob:
+                code = "R.N.1."
         amount, label = _code_amount(db, code)
         lines.append(PayLine(code=code, qty=1, amount=amount, label=label))
 

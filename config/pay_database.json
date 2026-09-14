@@ -74,19 +74,20 @@
     "R.T.9.": {
       "amount": 36.0,
       "category": "repair",
-      "label": "Special Request — INSIDE INGRESS",
-      "tech360_triggers": ["INSIDE INGRESS", "INSIDE INGRESS-CF", "75:INSIDE INGRESS", "INGRESS"],
-      "confirmed": true,
-      "example_job": 575865,
-      "note": "Any SR code containing INGRESS — $36 from field"
+      "label": "Special Request — INGRESS (field guide)",
+      "tech360_triggers": ["INGRESS"],
+      "confirmed": false,
+      "note": "Field guide amount; ATN payroll bills Inside Ingress as R.T.6. at $28.18"
     },
     "R.T.6.": {
-      "amount": 26.15,
+      "amount": 28.18,
+      "reference_amount": 26.15,
       "category": "repair",
-      "label": "Proactive Visit (field guide — may bill as R.T.7. on payroll)",
-      "tech360_triggers": ["Proactive Visit"],
-      "confirmed": false,
-      "note": "Legacy field guide code; confirmed payroll uses R.T.7. at $37.57"
+      "label": "Special Request — Inside Ingress",
+      "tech360_triggers": ["INSIDE INGRESS", "INSIDE INGRESS-CF", "75:INSIDE INGRESS"],
+      "confirmed": true,
+      "example_job": 575865,
+      "note": "ATN payroll code for Inside Ingress SR — $28.18 (not R.T.9.)"
     },
     "R.Q.2.": {
       "amount": 52.83,
@@ -126,11 +127,11 @@
       "category": "site_work",
       "label": "MDU drop in apartment",
       "label_short": "MDU (262)",
-      "tech360_triggers": ["262 MDU drop in apartment"],
-      "applies_to": ["service_change", "new_install", "service_change_up"],
-      "confirmed": "partial",
-      "example_job": 499413,
-      "note": "Field guide listed as R.R.3. at $21.35; payroll bills R.R.2. at $23.95"
+      "tech360_triggers": ["262 MDU drop in apartment", "OUTSDE DROP-AERIAL", "OUTSIDE DROP AERIAL"],
+      "applies_to": ["service_change", "new_install", "service_change_up", "special_request"],
+      "confirmed": true,
+      "example_jobs": [499413, 586657],
+      "note": "MDU drop (262) or SR Outside Drop Aerial — payroll bills R.R.2. at $23.95"
     },
     "R.R.3.": {
       "amount": 21.35,
@@ -360,12 +361,25 @@
       "match": {
         "work_type": "Special Request"
       },
-      "match_any_subtype": ["INGRESS"],
-      "lines": [{ "code": "R.T.9.", "qty": 1 }],
+      "match_any_subtype": ["INSIDE INGRESS", "75:INSIDE INGRESS"],
+      "lines": [{ "code": "R.T.6.", "qty": 1 }],
       "user_prompt": null,
       "confirmed": true,
       "example_jobs": [575865],
-      "note": "Any code containing INGRESS — $36.00"
+      "note": "Inside Ingress SR — R.T.6. @ $28.18 (ATN payroll)"
+    },
+    {
+      "id": "special_request_outside_drop_aerial",
+      "priority": 33,
+      "match": {
+        "work_type": "Special Request"
+      },
+      "match_any_subtype": ["OUTSDE DROP-AERIAL", "OUTSIDE DROP AERIAL", "OUTSDE DROP AERIAL"],
+      "lines": [{ "code": "R.R.2.", "qty": 1 }],
+      "user_prompt": null,
+      "confirmed": true,
+      "example_jobs": [586657],
+      "note": "SR Outside Drop Aerial — R.R.2. @ $23.95 (standalone on payroll)"
     },
     {
       "id": "special_request_default",
@@ -376,7 +390,7 @@
       "lines": [{ "code": "R.T.17.", "qty": 1 }],
       "user_prompt": null,
       "confirmed": true,
-      "example_jobs": [492449, 586657, 267779],
+      "example_jobs": [492449, 267779],
       "note": "Catch-all — any other Special Request ($21.11)"
     },
     {
@@ -631,15 +645,30 @@
       "job_number": 575865,
       "work_type": "Special Request",
       "subtype": "INSIDE INGRESS-CF",
-      "expected_lines": [{ "code": "R.T.9.", "amount": 36.0 }],
-      "expected_total": 36.0
+      "expected_lines": [{ "code": "R.T.6.", "amount": 28.18 }],
+      "expected_total": 28.18,
+      "note": "ATN week 2026-08-23 — Inside Ingress bills R.T.6., not R.T.9."
     },
     {
       "job_number": 586657,
       "work_type": "Special Request",
-      "subtype": "RAISE DROP",
-      "expected_lines": [{ "code": "R.T.17.", "amount": 21.11 }],
-      "expected_total": 21.11
+      "subtype": "OUTSDE DROP-AERIAL",
+      "expected_lines": [{ "code": "R.R.2.", "amount": 23.95 }],
+      "expected_total": 23.95,
+      "note": "ATN week 2026-08-23 — Outside Drop Aerial SR bills R.R.2., not R.T.17."
+    },
+    {
+      "job_number": 573017,
+      "work_type": "New Install",
+      "subtype": "HSD NC",
+      "equipment": ["E.C.5."],
+      "product_code": "R.N.1.",
+      "expected_lines": [
+        { "code": "R.N.1.", "amount": 32.85 },
+        { "code": "E.C.5.", "amount": 17.65 }
+      ],
+      "expected_total": 50.5,
+      "note": "ATN week 2026-08-23 — apartment full install, not Self Install"
     },
     {
       "job_number": 267779,
@@ -680,7 +709,8 @@
       "Special Request": {
         "codes": [
           "R.T.17. Standard SR — any other code ($21.11)",
-          "R.T.9. INGRESS in code ($36.00)",
+          "R.T.6. Inside Ingress ($28.18)",
+          "R.R.2. Outside Drop Aerial SR ($23.95)",
           "R.T.7. PROACTIVE XIT-CF ($37.57)"
         ]
       }

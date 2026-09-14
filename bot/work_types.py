@@ -112,4 +112,16 @@ def normalize_extracted(extracted: dict[str, Any]) -> dict[str, Any]:
         codes.append(DEFAULT_TROUBLE_CALL_SUBTYPE)
         extracted["subtype_codes"] = codes
 
+    if work_type == "New Install" and codes:
+        blob = _subtype_blob(codes)
+        if any(token in blob for token in ("HSD NC", "HSD RC")) and any(
+            marker in blob for marker in SELF_INSTALL_MARKERS
+        ):
+            codes = [
+                code
+                for code in codes
+                if "SELF INSTALL" not in str(code).upper() and str(code).upper() not in ("RQ4", "R.Q.4.")
+            ]
+            extracted["subtype_codes"] = codes
+
     return extracted
