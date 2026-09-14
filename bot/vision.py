@@ -38,6 +38,10 @@ Rules:
 - Self Install is NOT a separate work type — it is always a subcode under New Install
 - If the screen shows New Install with "Self Install" / "RQ4" / "R.Q.4." on a line below the heading, set work_type to "New Install" and include "Self Install" in subtype_codes (this bills as R.Q.4. only — no equipment lines)
 - Always capture Self Install when visible — it changes payroll from a full install (R.N.1.+E.C.5.) to self install (R.Q.4.)
+- Do NOT infer Self Install from apartment/APT/MDU address alone — only when "Self Install" / RQ4 appears as a subcode line on screen
+- New Install in apartment with HSD NC / HSD RC and no Self Install subcode → full install (capture HSD NC or HSD RC, not Self Install)
+- Special Request Inside Ingress (INSIDE INGRESS-CF, 75:INSIDE INGRESS) → capture exact subcode in subtype_codes
+- Special Request Outside Drop Aerial (OUTSDE DROP-AERIAL) → capture exact subcode in subtype_codes
 - subtype_codes are lines under work_type (HSD OUT, HSD TC, H3:INT IMT BLKSYNC, VID OUT, Self Install, TECH RECOVERY, U44, etc.)
 - U44 / bury / underground drop on a New Install or Service Change job → include "U44" in subtype_codes (adds R.R.4.NB +$4.36 on payroll)
 - address is the full street + city + state + zip when visible on screen
