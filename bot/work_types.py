@@ -10,6 +10,12 @@ U44_SUBTYPE_MARKERS = ("U44", "BURY", "BURRY")
 SELF_INSTALL_MARKERS = ("SELF INSTALL", "SELF-INSTALL", "RQ4", "R.Q.4.")
 SELF_INSTALL_PRODUCT_CODE = "R.Q.4."
 DEFAULT_TROUBLE_CALL_SUBTYPE = "HSD OUT"
+PROACTIVE_SR_MARKERS = ("PROACTIVE", "XIT-CF", "MONITOR FAIL", "XA:MONITOR")
+PROACTIVE_SR_CANONICAL = "PROACTIVE XIT-CF"
+SPECIAL_REQUEST_WORK_TYPE = "Special Request"
+KNOWN_WORK_TYPES = frozenset(
+    {"Trouble Call", "Service Change", "New Install", SPECIAL_REQUEST_WORK_TYPE}
+)
 
 
 def _subtype_blob(subtype_codes: list[str] | None) -> str:
@@ -97,6 +103,36 @@ def apply_u44_answer(session: dict[str, Any], *, did_u44: bool) -> None:
     session["optional_addons"] = addons
 
 
+def _has_proactive_sr_markers(subtype_codes: list[str] | None) -> bool:
+    blob = _subtype_blob(subtype_codes)
+    return any(marker in blob for marker in PROACTIVE_SR_MARKERS)
+
+
+def _normalize_special_request_subtypes(extracted: dict[str, Any]) -> None:
+    """Ensure PROACTIVE SR billing subcode is present when Tech360 shows it."""
+    work_type = (extracted.get("work_type") or "").strip()
+    codes = list(extracted.get("subtype_codes") or [])
+
+    wt_upper = work_type.upper()
+    if work_type and work_type not in KNOWN_WORK_TYPES:
+        if any(marker in wt_upper for marker in PROACTIVE_SR_MARKERS) or "SPECIAL REQUEST" in wt_upper:
+            if work_type not in codes:
+                codes.append(work_type)
+            extracted["work_type"] = SPECIAL_REQUEST_WORK_TYPE
+            work_type = SPECIAL_REQUEST_WORK_TYPE
+
+    if work_type != SPECIAL_REQUEST_WORK_TYPE:
+        return
+
+    if not _has_proactive_sr_markers(codes):
+        return
+
+    if not any(str(code).upper() == PROACTIVE_SR_CANONICAL for code in codes):
+        codes.insert(0, PROACTIVE_SR_CANONICAL)
+
+    extracted["subtype_codes"] = codes
+
+
 def normalize_extracted(extracted: dict[str, Any]) -> dict[str, Any]:
     """Map legacy Self Install work type to New Install + Self Install subtype."""
     work_type = (extracted.get("work_type") or "").strip()
@@ -123,5 +159,7 @@ def normalize_extracted(extracted: dict[str, Any]) -> dict[str, Any]:
                 if "SELF INSTALL" not in str(code).upper() and str(code).upper() not in ("RQ4", "R.Q.4.")
             ]
             extracted["subtype_codes"] = codes
+
+    _normalize_special_request_subtypes(extracted)
 
     return extracted

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from bot.config import OPENAI_API_KEY, OPENAI_VISION_MODEL
+from bot.work_types import normalize_extracted
 
 logger = logging.getLogger("itg.vision")
 
@@ -27,7 +28,7 @@ Return ONLY valid JSON (no markdown) with this schema:
   "address": "string or null",
   "account_number": "string or null",
   "work_type": "Trouble Call | Service Change | New Install | Special Request | null",
-  "subtype_codes": ["array of codes like HSD OUT, VID OUT, Self Install, HSD NC, HSD RC, VID UP, TECH RECOVERY, FDX TECH RCVRY, DF:CHNL-CARE, INSIDE INGRESS-CF, 75:INSIDE INGRESS, RAISE DROP, OUTSDE DROP-AERIAL, 23:RAISE DROP"],
+  "subtype_codes": ["array of codes like HSD OUT, VID OUT, Self Install, HSD NC, HSD RC, VID UP, TECH RECOVERY, FDX TECH RCVRY, DF:CHNL-CARE, PROACTIVE XIT-CF, MONITOR FAIL, XA:MONITOR FAIL, INSIDE INGRESS-CF, 75:INSIDE INGRESS, RAISE DROP, OUTSDE DROP-AERIAL, 23:RAISE DROP"],
   "hookup_type": "Aerial | Underground | null",
   "dwelling_type": "string or null"
 }
@@ -40,9 +41,12 @@ Rules:
 - Always capture Self Install when visible — it changes payroll from a full install (R.N.1.+E.C.5.) to self install (R.Q.4.)
 - Do NOT infer Self Install from apartment/APT/MDU address alone — only when "Self Install" / RQ4 appears as a subcode line on screen
 - New Install in apartment with HSD NC / HSD RC and no Self Install subcode → full install (capture HSD NC or HSD RC, not Self Install)
+- Special Request: capture EVERY line under the "Special Request" heading in subtype_codes — the FIRST line is the payroll billing code and is mandatory
+- Special Request PROACTIVE (PROACTIVE XIT-CF, PROACTIVE, XIT-CF, MONITOR FAIL, XA:MONITOR FAIL) → always include the full billing line "PROACTIVE XIT-CF" in subtype_codes (bills R.T.7. $37.57 — not standard SR)
 - Special Request Inside Ingress (INSIDE INGRESS-CF, 75:INSIDE INGRESS) → capture exact subcode in subtype_codes
 - Special Request Outside Drop Aerial (OUTSDE DROP-AERIAL) → capture exact subcode in subtype_codes
-- subtype_codes are lines under work_type (HSD OUT, HSD TC, H3:INT IMT BLKSYNC, VID OUT, Self Install, TECH RECOVERY, U44, etc.)
+- For Special Request, symptom/reason lines (UE:..., XA RECOMMENDING..., downstream errors, etc.) are ADDITIONAL lines — never omit the billing subcode above them (e.g. screen shows "PROACTIVE XIT-CF" then "UE:DOWNSTREAM ERRORS" → subtype_codes must include BOTH, not only the UE line)
+- subtype_codes are lines under work_type (HSD OUT, HSD TC, H3:INT IMT BLKSYNC, VID OUT, Self Install, TECH RECOVERY, PROACTIVE XIT-CF, U44, etc.)
 - U44 / bury / underground drop on a New Install or Service Change job → include "U44" in subtype_codes (adds R.R.4.NB +$4.36 on payroll)
 - address is the full street + city + state + zip when visible on screen
 - account_number is the long number under Account #
@@ -128,9 +132,9 @@ async def extract_from_images(image_paths: list[Path]) -> dict[str, Any]:
                 response_format={"type": "json_object"},
             )
             raw = response.choices[0].message.content or "{}"
-            parsed = _parse_json_response(raw)
+            parsed = normalize_extracted(_parse_json_response(raw))
             if len(image_paths) > 1:
-                return _merge_extractions([parsed])
+                return normalize_extracted(_merge_extractions([parsed]))
             return parsed
         except RateLimitError as exc:
             last_error = exc
