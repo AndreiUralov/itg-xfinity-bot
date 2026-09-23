@@ -16,6 +16,16 @@ SPECIAL_REQUEST_WORK_TYPE = "Special Request"
 KNOWN_WORK_TYPES = frozenset(
     {"Trouble Call", "Service Change", "New Install", SPECIAL_REQUEST_WORK_TYPE}
 )
+SERVICE_CHANGE_SUBTYPE_MARKERS = (
+    "HSD UP",
+    "VID UP",
+    "CDV UP",
+    "TECH RECOVERY",
+    "TECH RCVRY",
+    "FDX TECH RCVRY",
+    "DF:CHNL-CARE",
+    "CHNL-CARE",
+)
 
 
 def _subtype_blob(subtype_codes: list[str] | None) -> str:
@@ -161,5 +171,12 @@ def normalize_extracted(extracted: dict[str, Any]) -> dict[str, Any]:
             extracted["subtype_codes"] = codes
 
     _normalize_special_request_subtypes(extracted)
+
+    work_type = (extracted.get("work_type") or "").strip()
+    codes = list(extracted.get("subtype_codes") or [])
+    if not work_type and codes:
+        blob = _subtype_blob(codes)
+        if any(marker in blob for marker in SERVICE_CHANGE_SUBTYPE_MARKERS):
+            extracted["work_type"] = "Service Change"
 
     return extracted

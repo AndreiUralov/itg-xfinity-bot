@@ -28,14 +28,14 @@ Return ONLY valid JSON (no markdown) with this schema:
   "address": "string or null",
   "account_number": "string or null",
   "work_type": "Trouble Call | Service Change | New Install | Special Request | null",
-  "subtype_codes": ["array of codes like HSD OUT, VID OUT, Self Install, HSD NC, HSD RC, VID UP, TECH RECOVERY, FDX TECH RCVRY, DF:CHNL-CARE, PROACTIVE XIT-CF, MONITOR FAIL, XA:MONITOR FAIL, INSIDE INGRESS-CF, 75:INSIDE INGRESS, RAISE DROP, OUTSDE DROP-AERIAL, 23:RAISE DROP"],
+  "subtype_codes": ["array of codes like HSD OUT, VID OUT, Self Install, HSD NC, HSD RC, HSD UP, VID UP, CDV UP, TECH RECOVERY, FDX TECH RCVRY, DF:CHNL-CARE, PROACTIVE XIT-CF, MONITOR FAIL, XA:MONITOR FAIL, INSIDE INGRESS-CF, 75:INSIDE INGRESS, RAISE DROP, OUTSDE DROP-AERIAL, 23:RAISE DROP"],
   "hookup_type": "Aerial | Underground | null",
   "dwelling_type": "string or null"
 }
 
 Rules:
 - job_number is from header "Job# ######"
-- work_type is the large heading near bottom (Trouble Call, Service Change, New Install, etc.)
+- work_type is the large heading near bottom (Trouble Call, Service Change, New Install, etc.) — on Details tab it may appear as a section title above subcodes (e.g. "Service Change" above "CDV UP" / "DF:CHNL-CARE")
 - Self Install is NOT a separate work type — it is always a subcode under New Install
 - If the screen shows New Install with "Self Install" / "RQ4" / "R.Q.4." on a line below the heading, set work_type to "New Install" and include "Self Install" in subtype_codes (this bills as R.Q.4. only — no equipment lines)
 - Always capture Self Install when visible — it changes payroll from a full install (R.N.1.+E.C.5.) to self install (R.Q.4.)
