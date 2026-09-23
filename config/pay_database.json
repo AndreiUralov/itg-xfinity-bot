@@ -168,7 +168,7 @@
       "reference_amount": 16.56,
       "category": "service_change_up",
       "label": "Service Change UP — swap only",
-      "tech360_triggers": ["CAO complete as ordered", "VID UPGRADE", "HSD UP", "VID UP"],
+      "tech360_triggers": ["CAO complete as ordered", "VID UPGRADE", "HSD UP", "VID UP", "CDV UP"],
       "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.4.NB"],
       "confirmed": true,
       "example_job": 498945,
@@ -178,7 +178,7 @@
       "amount": 23.46,
       "category": "service_change_up",
       "label": "Service Change UP — add equipment",
-      "tech360_triggers": ["HSD UP", "VID UP", "additional install"],
+      "tech360_triggers": ["HSD UP", "VID UP", "CDV UP", "additional install"],
       "pairs_with": ["E.C.5.", "E.B.5.", "E.B.6."],
       "confirmed": true,
       "example_job": 505358,
@@ -311,7 +311,8 @@
       "match": {
         "work_type": "Service Change"
       },
-      "match_any_subtype": ["TECH RECOVERY", "TECH RCVRY", "FDX TECH RCVRY"],
+      "match_any_subtype": ["TECH RECOVERY", "TECH RCVRY", "FDX TECH RCVRY", "DF:CHNL-CARE", "CHNL-CARE"],
+      "exclude_if_any_subtype": ["HSD UP", "VID UP", "CDV UP"],
       "lines": [{ "code": "R.Q.2.", "qty": 1 }],
       "site_work_addon_prompt": true,
       "user_prompt": null,
@@ -342,6 +343,18 @@
       "site_work_addon_prompt": true,
       "confirmed": true,
       "example_jobs": [498945]
+    },
+    {
+      "id": "service_change_cdv_up",
+      "priority": 23,
+      "match": {
+        "work_type": "Service Change"
+      },
+      "match_any_subtype": ["CDV UP"],
+      "up_base_prompt": true,
+      "equipment_prompt": true,
+      "site_work_addon_prompt": true,
+      "confirmed": true
     },
     {
       "id": "special_request_proactive",

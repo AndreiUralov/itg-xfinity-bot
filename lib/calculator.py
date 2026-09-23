@@ -96,9 +96,16 @@ def _normalize_subtype_list(subtypes: list[str] | str | None) -> list[str]:
     return [s.upper().strip() for s in subtypes]
 
 
+SERVICE_CHANGE_UP_MARKERS = ("HSD UP", "VID UP", "CDV UP")
+
+
 def _subtype_matches(rule: dict, subtypes: list[str]) -> bool:
     upper = [s.upper() for s in subtypes]
     joined = " ".join(upper)
+
+    exclude = rule.get("exclude_if_any_subtype") or []
+    if exclude and any(needle.upper() in joined for needle in exclude):
+        return False
 
     if "match_all_subtype" in rule:
         for needle in rule["match_all_subtype"]:

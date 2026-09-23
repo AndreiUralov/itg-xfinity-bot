@@ -1,8 +1,9 @@
 rule_id,priority,work_type,subtype_match,match_mode,base_codes,equipment_prompt,product_prompt,confirmed,example_jobs
 trouble_call,10,Trouble Call,,,R.T.8.,FALSE,FALSE,TRUE,509413;506037;279516
-service_change_tech_recovery,20,Service Change,"TECH RECOVERY|TECH RCVRY|FDX TECH RCVRY",any,R.Q.2.,FALSE,FALSE,TRUE,497745;510236;583365
+service_change_tech_recovery,20,Service Change,"TECH RECOVERY|TECH RCVRY|FDX TECH RCVRY|DF:CHNL-CARE|CHNL-CARE",any,R.Q.2.,FALSE,FALSE,TRUE,497745;510236;583365
 service_change_hsd_up,21,Service Change,HSD UP,any,R.A.1.,TRUE,FALSE,TRUE,
 service_change_vid_up,22,Service Change,VID UP,any,R.A.1.,TRUE,FALSE,TRUE,498945
+service_change_cdv_up,23,Service Change,CDV UP,any,R.A.1.,TRUE,FALSE,TRUE,
 special_request_proactive,31,Special Request,"PROACTIVE|XIT-CF|MONITOR FAIL|XA:MONITOR",any,R.T.7.,FALSE,FALSE,TRUE,475937
 special_request_inside_ingress,32,Special Request,"INSIDE INGRESS|75:INSIDE INGRESS",any,R.T.6.,FALSE,FALSE,TRUE,575865
 special_request_outside_drop_aerial,33,Special Request,"OUTSDE DROP-AERIAL|OUTSIDE DROP AERIAL",any,R.R.2.,FALSE,FALSE,TRUE,586657
