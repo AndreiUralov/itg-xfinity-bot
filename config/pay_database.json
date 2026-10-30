@@ -96,7 +96,7 @@
       "category": "service_change",
       "label": "Service Change — TECH RECOVERY",
       "tech360_triggers": ["FS3 inactive outlet", "TECH RECOVERY", "TECH RCVRY", "FDX TECH RCVRY", "DF:CHNL-CARE"],
-      "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.4.NB"],
+      "site_work_addons": ["R.R.1.", "R.R.2.", "R.R.3.", "R.R.3.NB", "R.R.4.NB"],
       "confirmed": true,
       "example_jobs": [497745, 510236, 501573, 444856, 502129]
     },
@@ -135,12 +135,25 @@
       "note": "MDU drop (262) or SR Outside Drop Aerial — payroll bills R.R.2. at $23.95"
     },
     "R.R.3.": {
-      "amount": 21.35,
+      "amount": 23.02,
+      "reference_amount": 21.35,
       "category": "site_work",
-      "label": "MDU drop (field guide code — payroll may use R.R.2.)",
+      "label": "MDU drop (262) — payroll R.R.3.",
+      "label_short": "MDU R.R.3.",
       "tech360_triggers": ["262 MDU drop in apartment"],
-      "confirmed": false,
-      "note": "Legacy field guide code; use R.R.2. on invoice when MDU work done"
+      "applies_to": ["service_change", "new_install", "service_change_up"],
+      "confirmed": true,
+      "note": "ATN payroll on New Install — e.g. week 2026-10-11 jobs 707097, 718037"
+    },
+    "R.R.3.NB": {
+      "amount": 21.36,
+      "category": "site_work",
+      "label": "MDU drop (262) — payroll R.R.3.NB",
+      "label_short": "MDU R.R.3.NB",
+      "tech360_triggers": ["262 MDU drop in apartment"],
+      "applies_to": ["service_change", "new_install"],
+      "confirmed": true,
+      "note": "ATN payroll on Service Change TECH RECOVERY — e.g. week 2026-10-11"
     },
     "R.R.4.": {
       "amount": 4.36,
@@ -475,7 +488,19 @@
       "code": "R.R.2.",
       "label": "MDU drop in apartment (262)",
       "label_short": "MDU +$23.95",
-      "when": "MDU drop в квартире / 262"
+      "when": "MDU drop в квартире / 262 (legacy payroll R.R.2.)"
+    },
+    {
+      "code": "R.R.3.",
+      "label": "MDU drop (262) — R.R.3.",
+      "label_short": "MDU R.R.3. +$23.02",
+      "when": "262 MDU — отдельный шаг MDU (New Install / др.)"
+    },
+    {
+      "code": "R.R.3.NB",
+      "label": "MDU drop (262) — R.R.3.NB",
+      "label_short": "MDU R.R.3.NB +$21.36",
+      "when": "262 MDU — отдельный шаг MDU (TECH RECOVERY)"
     },
     {
       "code": "R.R.4.NB",
@@ -535,6 +560,33 @@
       ],
       "expected_total": 57.19,
       "note": "ATN week 2026-08-16 — U44/bury drop adds R.R.4.NB on top of TECH RECOVERY"
+    },
+    {
+      "job_number": 711908,
+      "work_type": "Service Change",
+      "subtype": "TECH RECOVERY",
+      "optional_addons": ["R.R.3.NB"],
+      "expected_lines": [
+        { "code": "R.Q.2.", "amount": 52.83 },
+        { "code": "R.R.3.NB", "amount": 21.36 }
+      ],
+      "expected_total": 74.19,
+      "note": "ATN week 2026-10-11 — MDU step R.R.3.NB on TECH RECOVERY"
+    },
+    {
+      "job_number": 707097,
+      "work_type": "New Install",
+      "subtype": "HSD NC",
+      "equipment": ["E.C.5."],
+      "product_code": "R.N.1.",
+      "optional_addons": ["R.R.3."],
+      "expected_lines": [
+        { "code": "R.N.1.", "amount": 32.85 },
+        { "code": "E.C.5.", "amount": 17.65 },
+        { "code": "R.R.3.", "amount": 23.02 }
+      ],
+      "expected_total": 73.52,
+      "note": "ATN week 2026-10-11 — MDU step R.R.3. on New Install"
     },
     {
       "job_number": 509413,

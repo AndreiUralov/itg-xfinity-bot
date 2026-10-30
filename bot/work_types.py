@@ -7,6 +7,9 @@ from typing import Any
 U44_ADDON_CODE = "R.R.4.NB"
 U44_LEGACY_ADDON_CODE = "R.R.4."
 U44_SUBTYPE_MARKERS = ("U44", "BURY", "BURRY")
+MDU_ADDON_CODES = ("R.R.3.", "R.R.3.NB")
+MDU_SUBTYPE_MARKERS = ("262 MDU", "MDU DROP IN APARTMENT", "262 MDU DROP")
+SERVICE_CHANGE_UP_MARKERS = ("HSD UP", "VID UP", "CDV UP")
 SELF_INSTALL_MARKERS = ("SELF INSTALL", "SELF-INSTALL", "RQ4", "R.Q.4.")
 SELF_INSTALL_PRODUCT_CODE = "R.Q.4."
 DEFAULT_TROUBLE_CALL_SUBTYPE = "HSD OUT"
@@ -111,6 +114,74 @@ def apply_u44_answer(session: dict[str, Any], *, did_u44: bool) -> None:
     if not has_u44_addon(addons):
         addons.append(U44_ADDON_CODE)
     session["optional_addons"] = addons
+
+
+def is_tech_recovery_subtypes(subtype_codes: list[str] | None) -> bool:
+    blob = _subtype_blob(subtype_codes)
+    if any(marker in blob for marker in SERVICE_CHANGE_UP_MARKERS):
+        return False
+    recovery_markers = (
+        "TECH RECOVERY",
+        "TECH RCVRY",
+        "FDX TECH RCVRY",
+        "DF:CHNL-CARE",
+        "CHNL-CARE",
+    )
+    return any(marker in blob for marker in recovery_markers)
+
+
+def has_mdu_addon(addons: list[str] | None) -> bool:
+    return any(code in MDU_ADDON_CODES for code in (addons or []))
+
+
+def subtype_indicates_mdu(subtype_codes: list[str] | None) -> bool:
+    blob = _subtype_blob(subtype_codes)
+    return any(marker in blob for marker in MDU_SUBTYPE_MARKERS)
+
+
+def needs_mdu_prompt(extracted: dict[str, Any]) -> bool:
+    work_type = (extracted.get("work_type") or "").strip()
+    if work_type == "New Install":
+        return not is_new_install_self(extracted)
+    if work_type == "Service Change":
+        return is_tech_recovery_subtypes(extracted.get("subtype_codes"))
+    return False
+
+
+def should_prompt_mdu(extracted: dict[str, Any], session: dict[str, Any]) -> bool:
+    if not needs_mdu_prompt(extracted):
+        return False
+    if session.get("mdu_prompt_done"):
+        return False
+    if has_mdu_addon(session.get("optional_addons")):
+        return False
+    return True
+
+
+def _strip_mdu_addons(addons: list[str]) -> list[str]:
+    return [code for code in addons if code not in MDU_ADDON_CODES]
+
+
+def apply_mdu_answer(session: dict[str, Any], choice: str) -> None:
+    """
+    choice: no | rr3 | rr3nb
+    """
+    session["mdu_prompt_done"] = True
+    addons = _strip_mdu_addons(list(session.get("optional_addons") or []))
+    if choice == "rr3":
+        addons.append("R.R.3.")
+    elif choice == "rr3nb":
+        addons.append("R.R.3.NB")
+    session["optional_addons"] = addons
+
+
+def apply_mdu_from_subtypes(extracted: dict[str, Any], session: dict[str, Any]) -> bool:
+    """When Tech360 shows 262 MDU, skip re-prompt if user already picked MDU on a prior pass."""
+    if not subtype_indicates_mdu(extracted.get("subtype_codes")):
+        return False
+    if has_mdu_addon(session.get("optional_addons")):
+        return True
+    return False
 
 
 def _has_proactive_sr_markers(subtype_codes: list[str] | None) -> bool:

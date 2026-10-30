@@ -48,6 +48,7 @@ from bot.keyboards import (  # noqa: E402
     today_job_keyboard,
     today_list_keyboard,
     up_install_mode_keyboard,
+    mdu_prompt_keyboard,
     u44_prompt_keyboard,
     work_type_keyboard,
 )
@@ -102,11 +103,14 @@ from bot.users import (  # noqa: E402
     validate_tech_label,
 )
 from bot.work_types import (  # noqa: E402
+    apply_mdu_answer,
+    apply_mdu_from_subtypes,
     apply_self_install_session,
     apply_u44_answer,
     apply_u44_from_subtypes,
     is_new_install_self,
     normalize_extracted,
+    should_prompt_mdu,
     should_prompt_u44,
 )
 from bot.vision import NO_API_KEY_MSG, RATE_LIMIT_MSG, empty_extraction, extract_from_images  # noqa: E402
@@ -350,6 +354,33 @@ async def _prompt_u44_addon(message_target, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
+async def _prompt_mdu_addon(message_target, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data["step"] = "mdu_prompt"
+    await message_target.edit_message_text(
+        "🏢 <b>MDU</b> (262 drop в квартире)\n\n"
+        "Делал MDU drop? Выбери код как на ATN payroll:\n"
+        "• <code>R.R.3.NB</code> — чаще на <b>TECH RECOVERY</b>\n"
+        "• <code>R.R.3.</code> — чаще на <b>New Install</b>",
+        parse_mode="HTML",
+        reply_markup=mdu_prompt_keyboard(),
+    )
+
+
+async def _finish_or_prompt_mdu(
+    target,
+    context: ContextTypes.DEFAULT_TYPE,
+    extracted: dict,
+    pay,
+    rule_id: str,
+) -> None:
+    apply_mdu_from_subtypes(extracted, context.user_data)
+    if should_prompt_mdu(extracted, context.user_data):
+        context.user_data["pending_rule_id"] = rule_id
+        await _prompt_mdu_addon(target, context)
+        return
+    await _save_and_finish(target, context, extracted, pay, rule_id)
+
+
 async def _finish_or_prompt_u44(
     target,
     context: ContextTypes.DEFAULT_TYPE,
@@ -362,7 +393,7 @@ async def _finish_or_prompt_u44(
         context.user_data["pending_rule_id"] = rule_id
         await _prompt_u44_addon(target, context)
         return
-    await _save_and_finish(target, context, extracted, pay, rule_id)
+    await _finish_or_prompt_mdu(target, context, extracted, pay, rule_id)
 
 
 async def _prompt_up_equipment(message_target, context: ContextTypes.DEFAULT_TYPE, db: dict) -> None:
@@ -1814,6 +1845,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         choice = data[4:]
         extracted = normalize_extracted(extracted)
         apply_u44_answer(context.user_data, did_u44=(choice == "yes"))
+        rule_id = context.user_data.pop("pending_rule_id", None)
+        if not rule_id:
+            rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))
+            rule_id = rule["id"] if rule else "manual"
+        pay = _preview_pay(extracted, **_pay_kwargs(context))
+        await _finish_or_prompt_mdu(query, context, extracted, pay, rule_id)
+        return
+
+    if data.startswith("mdu:"):
+        choice = data[4:]
+        if choice not in ("no", "rr3", "rr3nb"):
+            await query.answer("Неверный выбор", show_alert=True)
+            return
+        extracted = normalize_extracted(extracted)
+        apply_mdu_answer(context.user_data, choice)
         rule_id = context.user_data.pop("pending_rule_id", None)
         if not rule_id:
             rule = find_matching_rule(db, extracted.get("work_type") or "", extracted.get("subtype_codes"))

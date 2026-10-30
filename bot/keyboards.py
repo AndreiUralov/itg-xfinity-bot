@@ -235,6 +235,17 @@ def u44_prompt_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def mdu_prompt_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🏢 MDU — R.R.3.NB (+$21.36)", callback_data="mdu:rr3nb")],
+            [InlineKeyboardButton("🏢 MDU — R.R.3. (+$23.02)", callback_data="mdu:rr3")],
+            [InlineKeyboardButton("⏭ Нет MDU", callback_data="mdu:no")],
+            [InlineKeyboardButton("« Назад", callback_data="act:back_preview")],
+        ]
+    )
+
+
 def up_install_mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
