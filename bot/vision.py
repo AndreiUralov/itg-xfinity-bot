@@ -48,6 +48,7 @@ Rules:
 - For Special Request, symptom/reason lines (UE:..., XA RECOMMENDING..., downstream errors, etc.) are ADDITIONAL lines — never omit the billing subcode above them (e.g. screen shows "PROACTIVE XIT-CF" then "UE:DOWNSTREAM ERRORS" → subtype_codes must include BOTH, not only the UE line)
 - subtype_codes are lines under work_type (HSD OUT, HSD TC, H3:INT IMT BLKSYNC, VID OUT, Self Install, TECH RECOVERY, PROACTIVE XIT-CF, U44, etc.)
 - U44 / bury / underground drop on a New Install or Service Change job → include "U44" in subtype_codes (adds R.R.4.NB +$4.36 on payroll)
+- 262 MDU drop in apartment → include "262 MDU drop in apartment" (or similar) in subtype_codes — bot will ask MDU step (R.R.3.NB or R.R.3.)
 - address is the full street + city + state + zip when visible on screen
 - account_number is the long number under Account #
 - If multiple screenshots belong to same job, merge fields — prefer non-null values
